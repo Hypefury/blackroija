@@ -1009,6 +1009,7 @@ func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:])
 
 struct ContentView: View {
     @ObservedObject var store: Store
+    @State private var showPRs = true
 
     var body: some View {
         let now = store.now
@@ -1067,35 +1068,52 @@ struct ContentView: View {
     @ViewBuilder
     private func mergeStrip(_ queue: MergeQueue) -> some View {
         if !queue.isEmpty {
+            // One PR per line: problems first, then passing, then the rest.
+            let failing = Set(queue.failing), conflicts = Set(queue.conflicts), ready = Set(queue.ready)
+            let noSession = Set(queue.noSession)
+            let all = Array(failing.union(conflicts).union(ready).union(noSession))
+            let rank: (OpenPR) -> Int = { failing.contains($0) ? 0 : conflicts.contains($0) ? 1 : ready.contains($0) ? 2 : 3 }
+            let prs = all.sorted { rank($0) != rank($1) ? rank($0) < rank($1) : $0.number > $1.number }
             VStack(alignment: .leading, spacing: 3) {
-                Text("PRs").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
-                prLine("Checks passing", queue.ready)
-                prLine("Checks failing", queue.failing)
-                prLine("Conflicts", queue.conflicts)
-                prLine("No session", queue.noSession)
+                Text("\(showPRs ? "▾" : "▸") PRs (\(prs.count))").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
+                    .onTapGesture { showPRs.toggle() }
+                if showPRs {
+                    ForEach(prs, id: \.self) { pr in
+                        let notes = [failing.contains(pr) ? "failing" : nil,
+                                     conflicts.contains(pr) ? "conflicts" : nil,
+                                     noSession.contains(pr) ? "no session" : nil].compactMap { $0 }
+                        prRow(pr, color: failing.contains(pr) ? .red : conflicts.contains(pr) ? .orange
+                                  : ready.contains(pr) ? .green : .gray,
+                              notes: notes)
+                    }
+                }
             }
         }
     }
 
-    // "Ready to merge (3): 683, 682, Mobile 32" — numbers open the PR.
-    @ViewBuilder
-    private func prLine(_ name: String, _ prs: [OpenPR]) -> some View {
-        if !prs.isEmpty {
-            FlowLayout {
-                Text("\(name) (\(prs.count)): ").foregroundStyle(.secondary)
-                ForEach(Array(prs.enumerated()), id: \.element) { index, pr in
-                    HStack(spacing: 0) {
-                        if let app = repos.first(where: { $0.value == pr.repo })?.key, app != "Web app" {
-                            Text("\(app) ").foregroundStyle(.secondary)
-                        }
-                        PRLink(number: pr.number, url: pr.url, title: pr.title)
-                        if index < prs.count - 1 { Text(", ").foregroundStyle(.secondary) }
-                    }
+    private func prRow(_ pr: OpenPR, color: Color, notes: [String]) -> some View {
+        let app = repos.first(where: { $0.value == pr.repo && $0.key != "Web app" })?.key
+        return Button { if let url = pr.url { NSWorkspace.shared.open(url) } } label: {
+            HStack(spacing: 6) {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text((app.map { "\($0) " } ?? "") + "\(pr.number)")
+                    .monospacedDigit().frame(minWidth: 34, alignment: .leading)
+                Text(pr.title).lineLimit(1).truncationMode(.tail)
+                if !notes.isEmpty {
+                    Text(notes.joined(separator: " · ")).italic().foregroundStyle(.secondary).fixedSize()
                 }
+                Spacer(minLength: 0)
             }
-            .font(.system(size: 12))
-            .padding(.leading, 4)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .font(.system(size: 12))
+        .padding(.leading, 4)
+        .onHover { inside in
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .help("Open PR \(pr.number) on GitHub")
     }
 
     @ViewBuilder
