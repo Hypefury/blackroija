@@ -4,6 +4,8 @@ A small floating Mac window that lists your open Claude Code sessions (the Code 
 
 It only reads files on your Mac and GitHub. It never sends anything to a session or changes a PR.
 
+<img src="docs/screenshot.png" alt="The Session Status window" width="428">
+
 ## What you see
 
 Sessions are sorted into sections, and grouped by app (Web app, Mobile, Website) inside each section:
