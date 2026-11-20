@@ -145,7 +145,11 @@ struct OpenPR: Decodable, Hashable {
     let mergeStateStatus: String // CLEAN, UNSTABLE, BLOCKED, DIRTY, BEHIND, ...
     let statusCheckRollup: [Check]
     let baseRefName: String
+    let author: Author?
     var repo = ""
+    var mine = false  // opened by you
+
+    struct Author: Decodable, Hashable { let login: String }
 
     struct Check: Decodable, Hashable {
         let conclusion: String?
@@ -153,7 +157,7 @@ struct OpenPR: Decodable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case number, title, isDraft, mergeable, mergeStateStatus, statusCheckRollup, baseRefName
+        case number, title, isDraft, mergeable, mergeStateStatus, statusCheckRollup, baseRefName, author
     }
 
     var hasConflicts: Bool { mergeable == "CONFLICTING" }
@@ -165,8 +169,10 @@ struct OpenPR: Decodable, Hashable {
     // Every check passed and GitHub would merge it now, into the main branch:
     // a PR stacked on another PR's branch waits for that one first.
     var isReady: Bool {
-        !isDraft && mergeStateStatus == "CLEAN" && !isFailing && ["master", "main"].contains(baseRefName)
+        !isDraft && mergeStateStatus == "CLEAN" && !isFailing && !isStacked
     }
+    var isStacked: Bool { !["master", "main"].contains(baseRefName) }
+    var key: String { "\(repo.lowercased())#\(number)" }
     var url: URL? { URL(string: "https://github.com/\(repo)/pull/\(number)") }
 }
 
@@ -347,12 +353,23 @@ final class Store: ObservableObject {
         guard let gh = ghCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             throw NSError(domain: "SessionStatus", code: 1, userInfo: [NSLocalizedDescriptionKey: "GitHub's gh tool not found"])
         }
+        // Your GitHub login, to tell your PRs from teammates'.
+        let whoami = Process()
+        whoami.executableURL = URL(fileURLWithPath: gh)
+        whoami.arguments = ["api", "user", "--jq", ".login"]
+        let whoamiOut = Pipe()
+        whoami.standardOutput = whoamiOut
+        whoami.standardError = FileHandle.nullDevice
+        try whoami.run()
+        let login = String(decoding: whoamiOut.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        whoami.waitUntilExit()
         var all: [OpenPR] = []
         for repo in Set(repos.values).sorted() {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: gh)
             process.arguments = ["pr", "list", "-R", repo, "--state", "open", "--limit", "100",
-                                 "--json", "number,title,isDraft,mergeable,mergeStateStatus,statusCheckRollup,baseRefName"]
+                                 "--json", "number,title,isDraft,mergeable,mergeStateStatus,statusCheckRollup,baseRefName,author"]
             let out = Pipe()
             process.standardOutput = out
             process.standardError = FileHandle.nullDevice
@@ -363,7 +380,10 @@ final class Store: ObservableObject {
                 throw NSError(domain: "SessionStatus", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(repo)"])
             }
             var prs = try JSONDecoder().decode([OpenPR].self, from: data)
-            for i in prs.indices { prs[i].repo = repo }
+            for i in prs.indices {
+                prs[i].repo = repo
+                prs[i].mine = !login.isEmpty && prs[i].author?.login.lowercased() == login
+            }
             all += prs
         }
         return all
@@ -973,17 +993,19 @@ struct MergeQueue {
     var failing: [OpenPR] = []
     var conflicts: [OpenPR] = []
     var noSession: [OpenPR] = []
+    // The PRs shown: yours, plus teammates' ones an open session works on.
+    var shown: [OpenPR] = []
 
     init(_ open: [OpenPR], sessions: [Session]) {
         let tracked = Set(sessions.flatMap { $0.prs.map { "\($0.repo.lowercased())#\($0.number)" } })
-        let sorted = open.sorted { $0.number > $1.number }
-        ready = sorted.filter(\.isReady)
-        failing = sorted.filter { !$0.isDraft && $0.isFailing }
-        conflicts = sorted.filter(\.hasConflicts)
-        noSession = sorted.filter { !tracked.contains("\($0.repo.lowercased())#\($0.number)") }
+        shown = open.filter { $0.mine || tracked.contains($0.key) }.sorted { $0.number > $1.number }
+        ready = shown.filter(\.isReady)
+        failing = shown.filter { !$0.isDraft && $0.isFailing }
+        conflicts = shown.filter(\.hasConflicts)
+        noSession = shown.filter { !tracked.contains($0.key) }
     }
 
-    var isEmpty: Bool { ready.isEmpty && failing.isEmpty && conflicts.isEmpty && noSession.isEmpty }
+    var isEmpty: Bool { shown.isEmpty }
 }
 
 /// Splits sessions the way the window shows them.
@@ -1071,21 +1093,32 @@ struct ContentView: View {
             // One PR per line: problems first, then passing, then the rest.
             let failing = Set(queue.failing), conflicts = Set(queue.conflicts), ready = Set(queue.ready)
             let noSession = Set(queue.noSession)
-            let all = Array(failing.union(conflicts).union(ready).union(noSession))
             let rank: (OpenPR) -> Int = { failing.contains($0) ? 0 : conflicts.contains($0) ? 1 : ready.contains($0) ? 2 : 3 }
-            let prs = all.sorted { rank($0) != rank($1) ? rank($0) < rank($1) : $0.number > $1.number }
+            let prs = queue.shown.sorted { rank($0) != rank($1) ? rank($0) < rank($1) : $0.number > $1.number }
+            let apps = appOrder.compactMap { app -> (app: String, prs: [OpenPR])? in
+                let list = prs.filter { $0.repo == repos[app] }
+                return list.isEmpty ? nil : (app, list)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(showPRs ? "▾" : "▸") PRs (\(prs.count))").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
                     .contentShape(Rectangle())
                     .onTapGesture { showPRs.toggle() }
                 if showPRs {
-                    ForEach(prs, id: \.self) { pr in
-                        let notes = [failing.contains(pr) ? "failing" : nil,
-                                     conflicts.contains(pr) ? "conflicts" : nil,
-                                     noSession.contains(pr) ? "no session" : nil].compactMap { $0 }
-                        prRow(pr, color: failing.contains(pr) ? .red : conflicts.contains(pr) ? .orange
-                                  : ready.contains(pr) ? .green : .gray,
-                              notes: notes)
+                    ForEach(apps, id: \.app) { group in
+                        Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+                            .padding(.leading, 4).padding(.top, 2)
+                        ForEach(group.prs, id: \.self) { pr in
+                            let notes = [failing.contains(pr) ? "failing" : nil,
+                                         conflicts.contains(pr) ? "conflicts" : nil,
+                                         pr.isDraft ? "draft" : nil,
+                                         pr.isStacked ? "stacked" : nil,
+                                         noSession.contains(pr) ? "no session" : nil,
+                                         pr.mine ? nil : pr.author.map { "by \($0.login)" }].compactMap { $0 }
+                            prRow(pr, color: failing.contains(pr) ? .red : conflicts.contains(pr) ? .orange
+                                      : ready.contains(pr) ? .green : .gray,
+                                  notes: notes)
+                        }
+                        .padding(.leading, 12)
                     }
                 }
             }
@@ -1093,11 +1126,10 @@ struct ContentView: View {
     }
 
     private func prRow(_ pr: OpenPR, color: Color, notes: [String]) -> some View {
-        let app = repos.first(where: { $0.value == pr.repo && $0.key != "Web app" })?.key
-        return Button { if let url = pr.url { NSWorkspace.shared.open(url) } } label: {
+        Button { if let url = pr.url { NSWorkspace.shared.open(url) } } label: {
             HStack(spacing: 6) {
                 Circle().fill(color).frame(width: 7, height: 7)
-                Text((app.map { "\($0) " } ?? "") + "\(pr.number)")
+                Text("\(pr.number)")
                     .monospacedDigit().frame(minWidth: 34, alignment: .leading)
                 Text(pr.title).lineLimit(1).truncationMode(.tail)
                 if !notes.isEmpty {
@@ -1238,7 +1270,7 @@ enum SessionStatusApp {
             print("\(groups.stale) more idle for over a day")
             if let open {
                 let queue = MergeQueue(open, sessions: all)
-                for (name, list) in [("CHECKS PASSING", queue.ready), ("CHECKS FAILING", queue.failing),
+                for (name, list) in [("PRS SHOWN", queue.shown), ("CHECKS PASSING", queue.ready), ("CHECKS FAILING", queue.failing),
                                      ("CONFLICTS", queue.conflicts), ("NO SESSION", queue.noSession)] {
                     print("== \(name): " + list.map { "\($0.repo.split(separator: "/").last ?? "")#\($0.number)" }.joined(separator: ", "))
                 }
