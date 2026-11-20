@@ -42,6 +42,9 @@ let claudeCandidates = [
 ]
 
 let refreshSeconds: TimeInterval = 5
+// How often open PRs are fetched from GitHub (read-only, through `gh`).
+let prRefreshSeconds: TimeInterval = 60
+let ghCandidates = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
 let staleAfter: TimeInterval = 24 * 3600
 // A turn whose log hasn't moved for this long, without a finished reply,
 // was stopped or crashed rather than still working.
@@ -112,14 +115,57 @@ struct Session: Identifiable {
     let project: String
     let activity: Activity
     let lastActivity: Date
-    let prNumber: Int?
-    let prState: String?
+    // All its PRs, in the order the app lists them.
+    let prs: [SessionPR]
     let grade: GradeState
     // A question card or plan waiting for your click; the session is stuck
     // until you answer it.
     var question: String? = nil
     // The desktop app's own status for the last reply, when it is current.
     var appStatus: AppStatus? = nil
+}
+
+struct SessionPR: Hashable {
+    let number: Int
+    let repo: String  // "Owner/name"
+    let state: String // OPEN, MERGED, CLOSED
+
+    var isOpen: Bool { state.uppercased() == "OPEN" }
+    var url: URL? { URL(string: "https://github.com/\(repo)/pull/\(number)") }
+}
+
+/// An open PR as GitHub reports it.
+struct OpenPR: Decodable, Hashable {
+    let number: Int
+    let title: String
+    let isDraft: Bool
+    let mergeable: String        // MERGEABLE, CONFLICTING, UNKNOWN
+    let mergeStateStatus: String // CLEAN, UNSTABLE, BLOCKED, DIRTY, BEHIND, ...
+    let statusCheckRollup: [Check]
+    let baseRefName: String
+    var repo = ""
+
+    struct Check: Decodable, Hashable {
+        let conclusion: String?
+        let state: String?
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case number, title, isDraft, mergeable, mergeStateStatus, statusCheckRollup, baseRefName
+    }
+
+    var hasConflicts: Bool { mergeable == "CONFLICTING" }
+    var isFailing: Bool {
+        statusCheckRollup.contains {
+            ["FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED"].contains(($0.conclusion ?? $0.state ?? "").uppercased())
+        }
+    }
+    // Every check passed and GitHub would merge it now, into the main branch:
+    // a PR stacked on another PR's branch waits for that one first.
+    var isReady: Bool {
+        !isDraft && mergeStateStatus == "CLEAN" && !isFailing && ["master", "main"].contains(baseRefName)
+    }
+    var url: URL? { URL(string: "https://github.com/\(repo)/pull/\(number)") }
 }
 
 enum AppStatus {
@@ -268,6 +314,56 @@ final class Store: ObservableObject {
     @Published var loaded = false
     // The session the "next" shortcut opened last; the next press moves on.
     @Published var lastOpened: String?
+    // Open PRs across the three repos, nil until the first fetch.
+    @Published var openPRs: [OpenPR]?
+    @Published var prError: String?
+    private let prQueue = DispatchQueue(label: "session-status.prs")
+    private var prTimer: Timer?
+
+    private func startPRs() {
+        fetchPRs()
+        prTimer = Timer.scheduledTimer(withTimeInterval: prRefreshSeconds, repeats: true) { [weak self] _ in
+            self?.fetchPRs()
+        }
+    }
+
+    func fetchPRs() {
+        prQueue.async {
+            let result = Result { try Self.loadOpenPRs() }
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let prs): self.openPRs = prs; self.prError = nil
+                case .failure(let error): self.prError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    static func loadOpenPRs() throws -> [OpenPR] {
+        guard let gh = ghCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw NSError(domain: "SessionStatus", code: 1, userInfo: [NSLocalizedDescriptionKey: "GitHub's gh tool not found"])
+        }
+        var all: [OpenPR] = []
+        for repo in Set(repos.values).sorted() {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: gh)
+            process.arguments = ["pr", "list", "-R", repo, "--state", "open", "--limit", "100",
+                                 "--json", "number,title,isDraft,mergeable,mergeStateStatus,statusCheckRollup,baseRefName"]
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else {
+                throw NSError(domain: "SessionStatus", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(repo)"])
+            }
+            var prs = try JSONDecoder().decode([OpenPR].self, from: data)
+            for i in prs.indices { prs[i].repo = repo }
+            all += prs
+        }
+        return all
+    }
 
     /// Opens the session after the last one opened, in the "next" order;
     /// starts over at the top once past the end. Call on the main thread.
@@ -301,6 +397,7 @@ final class Store: ObservableObject {
     }
 
     func start() {
+        startPRs()
         reload()
         timer = Timer.scheduledTimer(withTimeInterval: refreshSeconds, repeats: true) { [weak self] _ in
             self?.reload()
@@ -370,16 +467,17 @@ final class Store: ObservableObject {
             if case .graded(let g) = grade { onlyWaiting = g.effort == .waiting }
             if !onlyWaiting { activity = .working; grade = .none }
         }
-        // The app shows a session's first PR; match it.
-        let pr = file.prs?.first
+        let prs: [SessionPR] = (file.prs ?? []).compactMap { pr in
+            guard let number = pr.prNumber, let repo = pr.repo ?? repos[project] else { return nil }
+            return SessionPR(number: number, repo: repo, state: pr.state ?? "OPEN")
+        }
         return Session(
             id: file.sessionId,
             title: (file.title?.isEmpty == false ? file.title! : "Untitled session"),
             project: project,
             activity: activity,
             lastActivity: last,
-            prNumber: pr?.prNumber,
-            prState: pr?.state,
+            prs: prs,
             grade: grade,
             question: transcript.question,
             appStatus: appStatus
@@ -685,17 +783,14 @@ struct Row: View {
                 }
                 HStack(spacing: 0) {
                     Text(detail).foregroundStyle(.secondary)
-                    if let pr = session.prNumber, let url = prURL(pr) {
-                        Text(" · ").foregroundStyle(.secondary)
-                        Button { NSWorkspace.shared.open(url) } label: {
-                            Text("PR \(pr)\(prState)").underline()
+                    if !shownPRs.isEmpty {
+                        Text(shownPRs.count > 1 ? " · PRs " : " · PR ").foregroundStyle(.secondary)
+                        ForEach(Array(shownPRs.enumerated()), id: \.element) { index, pr in
+                            if index > 0 { Text(", ").foregroundStyle(.secondary) }
+                            PRLink(number: pr.number, url: pr.url,
+                                   suffix: pr.isOpen ? "" : " (\(pr.state.lowercased()))")
                         }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.primary)
-                            .onHover { inside in
-                                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                            }
-                            .help("Open PR \(pr) on GitHub")
+                        if hiddenPRs > 0 { Text(" +\(hiddenPRs)").foregroundStyle(.secondary) }
                     }
                 }
                 .font(.system(size: 12))
@@ -711,14 +806,12 @@ struct Row: View {
         .help(session.need ?? "Open this session")
     }
 
-    private func prURL(_ pr: Int) -> URL? {
-        guard let repo = repos[session.project] else { return nil }
-        return URL(string: "https://github.com/\(repo)/pull/\(pr)")
+    // Its open PRs, up to four; with none open, the first one and its state.
+    private var openPRs: [SessionPR] { session.prs.filter(\.isOpen) }
+    private var shownPRs: [SessionPR] {
+        openPRs.isEmpty ? Array(session.prs.prefix(1)) : Array(openPRs.prefix(4))
     }
-
-    private var prState: String {
-        session.prState.map { $0.uppercased() == "OPEN" ? "" : " (\($0.lowercased()))" } ?? ""
-    }
+    private var hiddenPRs: Int { max(0, openPRs.count - 4) }
 
     private var dotColor: Color {
         if session.activity == .working { return .green }
@@ -767,6 +860,85 @@ func openSession(_ id: String) {
     if let url = URL(string: "claude://claude.ai/epitaxy/\(id)") { NSWorkspace.shared.open(url) }
 }
 
+/// An underlined PR number that opens the PR on GitHub.
+struct PRLink: View {
+    let number: Int
+    let url: URL?
+    var suffix = ""
+    var title: String? = nil
+
+    var body: some View {
+        Button { if let url { NSWorkspace.shared.open(url) } } label: {
+            Text("\(number)\(suffix)").underline()
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .onHover { inside in
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .help(title.map { "\(number): \($0)" } ?? "Open PR \(number) on GitHub")
+    }
+}
+
+/// Lays its children out left to right, wrapping onto new lines.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 0
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(subviews, width: proposal.width ?? .infinity)
+        return CGSize(width: rows.map(\.width).max() ?? 0, height: rows.map(\.height).reduce(0, +))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(subviews, width: bounds.width) {
+            var x = bounds.minX
+            for index in row.items {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height
+        }
+    }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat) -> [(items: [Int], width: CGFloat, height: CGFloat)] {
+        var rows: [(items: [Int], width: CGFloat, height: CGFloat)] = []
+        var current: (items: [Int], width: CGFloat, height: CGFloat) = ([], 0, 0)
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if !current.items.isEmpty && current.width + spacing + size.width > width {
+                rows.append(current)
+                current = ([], 0, 0)
+            }
+            current.width += (current.items.isEmpty ? 0 : spacing) + size.width
+            current.height = max(current.height, size.height)
+            current.items.append(index)
+        }
+        if !current.items.isEmpty { rows.append(current) }
+        return rows
+    }
+}
+
+/// The open PRs worth a look, by what you'd do with them.
+struct MergeQueue {
+    var ready: [OpenPR] = []
+    var failing: [OpenPR] = []
+    var conflicts: [OpenPR] = []
+    var noSession: [OpenPR] = []
+
+    init(_ open: [OpenPR], sessions: [Session]) {
+        let tracked = Set(sessions.flatMap { $0.prs.map { "\($0.repo.lowercased())#\($0.number)" } })
+        let sorted = open.sorted { $0.number > $1.number }
+        ready = sorted.filter(\.isReady)
+        failing = sorted.filter { !$0.isDraft && $0.isFailing }
+        conflicts = sorted.filter(\.hasConflicts)
+        noSession = sorted.filter { !tracked.contains("\($0.repo.lowercased())#\($0.number)") }
+    }
+
+    var isEmpty: Bool { ready.isEmpty && failing.isEmpty && conflicts.isEmpty && noSession.isEmpty }
+}
+
 /// Splits sessions the way the window shows them.
 func arrange(_ sessions: [Session], now: Date) -> (answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], finished: [Session], stale: Int) {
     let recent = sessions.filter {
@@ -798,6 +970,12 @@ struct ContentView: View {
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
                 if let error = store.error {
                     Text("Couldn't read sessions: \(error)").font(.system(size: 12)).foregroundStyle(.red)
+                }
+                if let open = store.openPRs {
+                    mergeStrip(MergeQueue(open, sessions: store.sessions))
+                }
+                if let prError = store.prError {
+                    Text("Couldn't read PRs: \(prError)").font(.system(size: 12)).foregroundStyle(.red)
                 }
                 section("Waiting for your answer", groups.answer, now: now, urgent: true)
                 section("Needs you", groups.needsYou, now: now)
@@ -832,6 +1010,40 @@ struct ContentView: View {
             Button("Refresh") { store.reload() }
             Divider()
             Button("Quit Session Status") { NSApp.terminate(nil) }
+        }
+    }
+
+    @ViewBuilder
+    private func mergeStrip(_ queue: MergeQueue) -> some View {
+        if !queue.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("PRs").font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
+                prLine("Checks passing", queue.ready)
+                prLine("Checks failing", queue.failing)
+                prLine("Conflicts", queue.conflicts)
+                prLine("No session", queue.noSession)
+            }
+        }
+    }
+
+    // "Ready to merge (3): 683, 682, Mobile 32" — numbers open the PR.
+    @ViewBuilder
+    private func prLine(_ name: String, _ prs: [OpenPR]) -> some View {
+        if !prs.isEmpty {
+            FlowLayout {
+                Text("\(name) (\(prs.count)): ").foregroundStyle(.secondary)
+                ForEach(Array(prs.enumerated()), id: \.element) { index, pr in
+                    HStack(spacing: 0) {
+                        if let app = repos.first(where: { $0.value == pr.repo })?.key, app != "Web app" {
+                            Text("\(app) ").foregroundStyle(.secondary)
+                        }
+                        PRLink(number: pr.number, url: pr.url, title: pr.title)
+                        if index < prs.count - 1 { Text(", ").foregroundStyle(.secondary) }
+                    }
+                }
+            }
+            .font(.system(size: 12))
+            .padding(.leading, 4)
         }
     }
 
@@ -948,6 +1160,14 @@ enum SessionStatusApp {
                 }
             }
             print("\(groups.stale) more idle for over a day")
+            if let open = try? Store.loadOpenPRs() {
+                let queue = MergeQueue(open, sessions: all)
+                for (name, list) in [("CHECKS PASSING", queue.ready), ("CHECKS FAILING", queue.failing),
+                                     ("CONFLICTS", queue.conflicts), ("NO SESSION", queue.noSession)] {
+                    print("== \(name): " + list.map { "\($0.repo.split(separator: "/").last ?? "")#\($0.number)" }.joined(separator: ", "))
+                }
+            }
+            for s in all where s.prs.count > 1 { print("  \(s.title): PRs " + s.prs.map { "\($0.number) \($0.state)" }.joined(separator: ", ")) }
             print("== NEXT KEY ORDER")
             for (i, s) in nextQueue(all, now: now).enumerated() { print("  \(i + 1). \(s.title)") }
             return
