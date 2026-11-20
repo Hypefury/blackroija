@@ -9,8 +9,11 @@
 //     the conversation log; its last message says whether Claude is mid-turn,
 //     and Claude's last reply says what it needs from you
 //
-// Each new last reply is graded once by Haiku through the `claude` command
-// (your own Claude login), and the grade is kept on disk.
+// What an idle session needs comes from the status the desktop app saves after
+// each turn (blocked / ready for review / finished, plus what you must do).
+// When that status is missing or older than the last reply, the reply is
+// graded once by Haiku through the `claude` command (your own Claude login),
+// and the grade is kept on disk.
 
 import AppKit
 import SwiftUI
@@ -114,6 +117,14 @@ struct Session: Identifiable {
     // A question card or plan waiting for your click; the session is stuck
     // until you answer it.
     var question: String? = nil
+    // The desktop app's own status for the last reply, when it is current.
+    var appStatus: AppStatus? = nil
+}
+
+enum AppStatus {
+    case blocked(String)     // what you must do
+    case reviewReady(String) // where it stands
+    case finished            // done, asks nothing
 }
 
 private struct SessionFile: Decodable {
@@ -127,6 +138,14 @@ private struct SessionFile: Decodable {
     let gitAnchors: [Anchor]?
     let originCwd: String?
     let prs: [PR]?
+    struct Summary: Decodable {
+        let status_category: String?
+        let status_detail: String?
+        let needs_action: String?
+    }
+    let postTurnSummary: Summary?
+    let postTurnSummaryFor: String?
+    let lastAssistantUuid: String?
 }
 
 struct LastReply {
@@ -318,7 +337,13 @@ final class Store: ObservableObject {
         let transcript = readTranscript(cliSessionId: file.cliSessionId)
         let isRecent = Date().timeIntervalSince(last) < staleAfter
         var activity = transcript.activity
-        var grade: GradeState = activity == .working
+        // The app's status, when it describes the reply the log ends on.
+        // Skipped while a background command runs: the status doesn't say
+        // whether the session is only waiting on CI, Haiku does.
+        let appStatus = activity == .idle && !transcript.commandRunning && transcript.question == nil
+            ? currentAppStatus(file, replyId: transcript.reply?.id)
+            : nil
+        var grade: GradeState = activity == .working || appStatus != nil
             ? .none
             : gradeState(sessionId: file.sessionId, reply: transcript.reply, gradeIfNeeded: isRecent)
         // A background command still running: if the session said it is only
@@ -340,8 +365,23 @@ final class Store: ObservableObject {
             prNumber: pr?.prNumber,
             prState: pr?.state,
             grade: grade,
-            question: transcript.question
+            question: transcript.question,
+            appStatus: appStatus
         )
+    }
+
+    private func currentAppStatus(_ file: SessionFile, replyId: String?) -> AppStatus? {
+        guard let summary = file.postTurnSummary, let replyId,
+              file.postTurnSummaryFor == replyId
+        else { return nil }
+        let action = summary.needs_action?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let detail = summary.status_detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        switch summary.status_category {
+        case "blocked": return .blocked(action.isEmpty ? detail : action)
+        case "review_ready": return .reviewReady(action.isEmpty ? detail : action)
+        case "completed": return action.isEmpty ? .finished : .blocked(action)
+        default: return nil
+        }
     }
 
     private func gradeState(sessionId: String, reply: LastReply?, gradeIfNeeded: Bool) -> GradeState {
@@ -573,13 +613,33 @@ func age(_ date: Date, now: Date) -> String {
 extension Session {
     var needsYou: Bool {
         guard activity == .idle else { return false }
+        if case .finished = appStatus { return false }
+        if appStatus != nil { return true }
         if case .graded(let g) = grade { return g.effort.needsYou }
         return true
     }
 
+    // Stuck until you act: an unanswered question card or plan, or a session
+    // the app marks blocked on you.
+    var blockedOnYou: Bool {
+        guard activity == .idle else { return false }
+        if question != nil { return true }
+        if case .blocked = appStatus { return true }
+        return false
+    }
+
+    var isFinished: Bool {
+        guard activity == .idle, case .finished = appStatus else { return false }
+        return true
+    }
 
     var need: String? {
         if let question { return question }
+        switch appStatus {
+        case .blocked(let text), .reviewReady(let text): return text.isEmpty ? nil : text
+        case .finished: return nil
+        case nil: break
+        }
         return switch grade {
         case .graded(let g): g.need.isEmpty ? nil : g.need
         case .failed(let reason): reason
@@ -601,8 +661,8 @@ struct Row: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 if let need = session.need {
-                    Text(need).font(.system(size: 12, weight: session.question != nil ? .semibold : .regular))
-                        .foregroundStyle(session.question != nil ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
+                    Text(need).font(.system(size: 12, weight: session.blockedOnYou ? .semibold : .regular))
+                        .foregroundStyle(session.blockedOnYou ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
                         .lineLimit(2)
                 }
                 HStack(spacing: 0) {
@@ -646,7 +706,7 @@ struct Row: View {
 
     private var dotColor: Color {
         if session.activity == .working { return .green }
-        if session.question != nil { return .red }
+        if session.blockedOnYou { return .red }
         return session.needsYou ? .orange : .gray
     }
 
@@ -677,23 +737,25 @@ func byApp(_ list: [Session]) -> [(app: String, sessions: [Session])] {
 }
 
 /// Splits sessions the way the window shows them.
-func arrange(_ sessions: [Session], now: Date) -> (answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], stale: Int) {
+func arrange(_ sessions: [Session], now: Date) -> (answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], finished: [Session], stale: Int) {
     let recent = sessions.filter {
         $0.activity == .working || now.timeIntervalSince($0.lastActivity) < staleAfter
     }
-    // Sessions stuck on a question you haven't answered get their own
-    // section at the top, the longest-stuck first.
-    let answer = recent.filter { $0.needsYou && $0.question != nil }.sorted { $0.lastActivity < $1.lastActivity }
-    let needsYou = recent.filter { $0.needsYou && $0.question == nil }.sorted {
+    // Sessions stuck until you act get their own section at the top, the
+    // longest-stuck first.
+    let answer = recent.filter(\.blockedOnYou).sorted { $0.lastActivity < $1.lastActivity }
+    let needsYou = recent.filter { $0.needsYou && !$0.blockedOnYou }.sorted {
         $0.grade.rank != $1.grade.rank ? $0.grade.rank < $1.grade.rank : $0.lastActivity > $1.lastActivity
     }
     let working = recent.filter { $0.activity == .working }.sorted { $0.lastActivity > $1.lastActivity }
-    let quiet = recent.filter { $0.activity == .idle && !$0.needsYou }.sorted { $0.lastActivity > $1.lastActivity }
-    return (answer, needsYou, working, quiet, sessions.count - recent.count)
+    let quiet = recent.filter { $0.activity == .idle && !$0.needsYou && !$0.isFinished }.sorted { $0.lastActivity > $1.lastActivity }
+    let finished = recent.filter(\.isFinished).sorted { $0.lastActivity > $1.lastActivity }
+    return (answer, needsYou, working, quiet, finished, sessions.count - recent.count)
 }
 
 struct ContentView: View {
     @ObservedObject var store: Store
+    @State private var showFinished = false
 
     var body: some View {
         let now = store.now
@@ -708,7 +770,19 @@ struct ContentView: View {
                 section("Needs you", groups.needsYou, now: now)
                 section("Working", groups.working, now: now)
                 section("Waiting", groups.quiet, now: now, dimmed: true)
-                if groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && store.error == nil && store.loaded {
+                if !groups.finished.isEmpty {
+                    // Finished sessions that ask nothing, folded into one line.
+                    DisclosureGroup(isExpanded: $showFinished) {
+                        ForEach(groups.finished) { Row(session: $0, now: now, dimmed: true) }
+                            .padding(.leading, 12)
+                    } label: {
+                        Text("Finished, nothing asked (\(groups.finished.count))")
+                            .font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
+                            .onTapGesture { showFinished.toggle() }
+                    }
+                }
+                if groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && groups.finished.isEmpty && store.error == nil && store.loaded {
                     Text("No recent Hypefury sessions.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 if groups.stale > 0 {
@@ -809,7 +883,7 @@ enum SessionStatusApp {
             let now = Date()
             let store = Store(gradeInBackground: false)
             let groups = arrange((try? store.scan()) ?? [], now: now)
-            for (name, list) in [("WAITING FOR YOUR ANSWER", groups.answer), ("NEEDS YOU", groups.needsYou), ("WORKING", groups.working), ("WAITING", groups.quiet)] {
+            for (name, list) in [("WAITING FOR YOUR ANSWER", groups.answer), ("NEEDS YOU", groups.needsYou), ("WORKING", groups.working), ("WAITING", groups.quiet), ("FINISHED, NOTHING ASKED", groups.finished)] {
                 print("== \(name)")
                 for group in byApp(list) {
                     print("  \(group.app)")
