@@ -798,8 +798,8 @@ struct Row: View {
                     Text(stuck).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange).lineLimit(2)
                 }
                 if let need = session.need {
-                    Text(need).font(.system(size: 12))
-                        .foregroundStyle(.primary)
+                    Text(need).font(.system(size: 12)).italic()
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
                 HStack(spacing: 0) {
