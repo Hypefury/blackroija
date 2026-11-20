@@ -817,25 +817,21 @@ struct Row: View {
                 if let stuck {
                     Text(stuck).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange).lineLimit(2)
                 }
-                if let need = session.need {
-                    Text(need).font(.system(size: 12)).italic()
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                HStack(spacing: 0) {
+                // Every open PR, wrapping onto more lines when needed.
+                FlowLayout {
                     Text(detail).foregroundStyle(.secondary)
                     if !shownPRs.isEmpty {
                         Text(shownPRs.count > 1 ? " · PRs " : " · PR ").foregroundStyle(.secondary)
-                        ForEach(Array(shownPRs.enumerated()), id: \.element) { index, pr in
-                            if index > 0 { Text(", ").foregroundStyle(.secondary) }
+                    }
+                    ForEach(Array(shownPRs.enumerated()), id: \.element) { index, pr in
+                        HStack(spacing: 0) {
                             PRLink(number: pr.number, url: pr.url,
                                    suffix: pr.isOpen ? problems[pr.key].map { " (\($0))" } ?? "" : " (\(pr.state.lowercased()))")
+                            if index < shownPRs.count - 1 { Text(", ").foregroundStyle(.secondary) }
                         }
-                        if hiddenPRs > 0 { Text(" +\(hiddenPRs)").foregroundStyle(.secondary) }
                     }
                 }
                 .font(.system(size: 12))
-                .lineLimit(1)
             }
             Spacer(minLength: 0)
         }
@@ -847,12 +843,11 @@ struct Row: View {
         .help(session.need ?? "Open this session")
     }
 
-    // Its open PRs, up to four; with none open, the first one and its state.
+    // All its open PRs; with none open, the first one and its state.
     private var openPRs: [SessionPR] { session.prs.filter(\.isOpen) }
     private var shownPRs: [SessionPR] {
-        openPRs.isEmpty ? Array(session.prs.prefix(1)) : Array(openPRs.prefix(4))
+        openPRs.isEmpty ? Array(session.prs.prefix(1)) : openPRs
     }
-    private var hiddenPRs: Int { max(0, openPRs.count - 4) }
 
     private var dotColor: Color {
         if stuck != nil { return .orange }
