@@ -16,6 +16,7 @@
 // and the grade is kept on disk.
 
 import AppKit
+import Carbon
 import SwiftUI
 
 // MARK: - Settings
@@ -265,6 +266,21 @@ final class Store: ObservableObject {
     // False until the first scan finishes, so an empty list isn't shown as
     // "no sessions" while it's still loading.
     @Published var loaded = false
+    // The session the "next" shortcut opened last; the next press moves on.
+    @Published var lastOpened: String?
+
+    /// Opens the session after the last one opened, in the "next" order;
+    /// starts over at the top once past the end. Call on the main thread.
+    func openNext() {
+        let queue = nextQueue(sessions, now: Date())
+        guard !queue.isEmpty else { NSSound.beep(); return }
+        var index = 0
+        if let last = lastOpened, let at = queue.firstIndex(where: { $0.id == last }) {
+            index = (at + 1) % queue.count
+        }
+        lastOpened = queue[index].id
+        openSession(queue[index].id)
+    }
 
     // Everything below is touched only on `work`.
     private let work = DispatchQueue(label: "session-status.work")
@@ -652,6 +668,8 @@ struct Row: View {
     let session: Session
     let now: Date
     let dimmed: Bool
+    // The session the "next" shortcut opened last, shaded.
+    var current = false
 
     // Clicking the row opens the session; clicking the PR number opens the
     // PR on GitHub (a button inside the row takes the click first).
@@ -687,11 +705,9 @@ struct Row: View {
         }
         .opacity(dimmed ? 0.6 : 1)
         .contentShape(Rectangle())
-        .onTapGesture {
-            if let url = URL(string: "claude://claude.ai/epitaxy/\(session.id)") {
-                NSWorkspace.shared.open(url)
-            }
-        }
+        .padding(.vertical, 2).padding(.horizontal, 4)
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(current ? 0.08 : 0)))
+        .onTapGesture { openSession(session.id) }
         .help(session.need ?? "Open this session")
     }
 
@@ -736,6 +752,21 @@ func byApp(_ list: [Session]) -> [(app: String, sessions: [Session])] {
     }
 }
 
+/// The order the "next" shortcut walks through: sessions blocked on you
+/// (longest-stuck first), then the rest that need you, where anything idle
+/// for over two hours goes first so it doesn't sink.
+func nextQueue(_ sessions: [Session], now: Date) -> [Session] {
+    let groups = arrange(sessions, now: now)
+    let old = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) > 2 * 3600 }
+        .sorted { $0.lastActivity < $1.lastActivity }
+    let rest = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) <= 2 * 3600 }
+    return groups.answer + old + rest
+}
+
+func openSession(_ id: String) {
+    if let url = URL(string: "claude://claude.ai/epitaxy/\(id)") { NSWorkspace.shared.open(url) }
+}
+
 /// Splits sessions the way the window shows them.
 func arrange(_ sessions: [Session], now: Date) -> (answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], finished: [Session], stale: Int) {
     let recent = sessions.filter {
@@ -763,6 +794,8 @@ struct ContentView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
+                Text("⌃⌥N opens the next session that needs you")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
                 if let error = store.error {
                     Text("Couldn't read sessions: \(error)").font(.system(size: 12)).foregroundStyle(.red)
                 }
@@ -795,6 +828,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 240, minHeight: 120)
         .contextMenu {
+            Button("Open next session (⌃⌥N)") { store.openNext() }
             Button("Refresh") { store.reload() }
             Divider()
             Button("Quit Session Status") { NSApp.terminate(nil) }
@@ -809,7 +843,7 @@ struct ContentView: View {
             ForEach(byApp(list), id: \.app) { group in
                 Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                     .padding(.leading, 4).padding(.top, 2)
-                ForEach(group.sessions) { Row(session: $0, now: now, dimmed: dimmed) }
+                ForEach(group.sessions) { Row(session: $0, now: now, dimmed: dimmed, current: $0.id == store.lastOpened) }
                     .padding(.leading, 12)
             }
         }
@@ -821,6 +855,23 @@ struct ContentView: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NSPanel!
     let store = Store()
+    static weak var current: AppDelegate?
+    private var hotKey: EventHotKeyRef?
+
+    /// Control-Option-N from any app opens the next session that needs you.
+    /// A Carbon hot key needs no accessibility permission.
+    private func registerNextKey() {
+        AppDelegate.current = self
+        var pressed = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
+            DispatchQueue.main.async { AppDelegate.current?.store.openNext() }
+            return noErr
+        }, 1, &pressed, nil, nil)
+        let id = EventHotKeyID(signature: OSType(0x5353_4e58), id: 1) // "SSNX"
+        let status = RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(controlKey | optionKey), id,
+                                         GetApplicationEventTarget(), 0, &hotKey)
+        NSLog("SessionStatus: next-session key registered with status %d", status)
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NSPanel(
@@ -860,6 +911,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panel.setFrameAutosaveName("SessionStatusPanel")
         panel.orderFrontRegardless()
+        registerNextKey()
         store.start()
     }
 
@@ -882,7 +934,8 @@ enum SessionStatusApp {
         if CommandLine.arguments.contains("--print") {
             let now = Date()
             let store = Store(gradeInBackground: false)
-            let groups = arrange((try? store.scan()) ?? [], now: now)
+            let all = (try? store.scan()) ?? []
+            let groups = arrange(all, now: now)
             for (name, list) in [("WAITING FOR YOUR ANSWER", groups.answer), ("NEEDS YOU", groups.needsYou), ("WORKING", groups.working), ("WAITING", groups.quiet), ("FINISHED, NOTHING ASKED", groups.finished)] {
                 print("== \(name)")
                 for group in byApp(list) {
@@ -895,6 +948,8 @@ enum SessionStatusApp {
                 }
             }
             print("\(groups.stale) more idle for over a day")
+            print("== NEXT KEY ORDER")
+            for (i, s) in nextQueue(all, now: now).enumerated() { print("  \(i + 1). \(s.title)") }
             return
         }
         let app = NSApplication.shared
