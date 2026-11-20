@@ -745,7 +745,8 @@ func age(_ date: Date, now: Date) -> String {
 extension Session {
     var needsYou: Bool {
         guard activity == .idle else { return false }
-        if case .finished = appStatus { return false }
+        // A session is only finished once you archive it, so "done, asks
+        // nothing" still needs you to check it and archive it.
         if appStatus != nil { return true }
         if case .graded(let g) = grade { return g.effort.needsYou }
         return true
@@ -760,16 +761,11 @@ extension Session {
         return false
     }
 
-    var isFinished: Bool {
-        guard activity == .idle, case .finished = appStatus else { return false }
-        return true
-    }
-
     var need: String? {
         if let question { return question }
         switch appStatus {
         case .blocked(let text), .reviewReady(let text): return text.isEmpty ? nil : text
-        case .finished: return nil
+        case .finished: return "Done: check it, then archive it"
         case nil: break
         }
         return switch grade {
@@ -991,7 +987,7 @@ struct MergeQueue {
 }
 
 /// Splits sessions the way the window shows them.
-func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:]) -> (stuck: [(session: Session, reason: String)], answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], finished: [Session], stale: Int) {
+func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:]) -> (stuck: [(session: Session, reason: String)], answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], stale: Int) {
     let all = sessions.filter {
         $0.activity == .working || now.timeIntervalSince($0.lastActivity) < staleAfter
     }
@@ -1007,14 +1003,12 @@ func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:])
         $0.grade.rank != $1.grade.rank ? $0.grade.rank < $1.grade.rank : $0.lastActivity > $1.lastActivity
     }
     let working = recent.filter { $0.activity == .working }.sorted { $0.lastActivity > $1.lastActivity }
-    let quiet = recent.filter { $0.activity == .idle && !$0.needsYou && !$0.isFinished }.sorted { $0.lastActivity > $1.lastActivity }
-    let finished = recent.filter(\.isFinished).sorted { $0.lastActivity > $1.lastActivity }
-    return (stuck, answer, needsYou, working, quiet, finished, sessions.count - all.count)
+    let quiet = recent.filter { $0.activity == .idle && !$0.needsYou }.sorted { $0.lastActivity > $1.lastActivity }
+    return (stuck, answer, needsYou, working, quiet, sessions.count - all.count)
 }
 
 struct ContentView: View {
     @ObservedObject var store: Store
-    @State private var showFinished = false
 
     var body: some View {
         let now = store.now
@@ -1050,19 +1044,7 @@ struct ContentView: View {
                 section("Needs you", groups.needsYou, now: now, problems: problems)
                 section("Working", groups.working, now: now, problems: problems)
                 section("Waiting", groups.quiet, now: now, dimmed: true, problems: problems)
-                if !groups.finished.isEmpty {
-                    // Finished sessions that ask nothing, folded into one line.
-                    DisclosureGroup(isExpanded: $showFinished) {
-                        ForEach(groups.finished) { Row(session: $0, now: now, dimmed: true, problems: problems) }
-                            .padding(.leading, 12)
-                    } label: {
-                        Text("Finished, nothing asked (\(groups.finished.count))")
-                            .font(.system(size: 12, weight: .bold)).foregroundStyle(.secondary)
-                            .contentShape(Rectangle())
-                            .onTapGesture { showFinished.toggle() }
-                    }
-                }
-                if groups.stuck.isEmpty && groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && groups.finished.isEmpty && store.error == nil && store.loaded {
+                if groups.stuck.isEmpty && groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && store.error == nil && store.loaded {
                     Text("No recent Hypefury sessions.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 if groups.stale > 0 {
@@ -1224,7 +1206,7 @@ enum SessionStatusApp {
             let groups = arrange(all, now: now, problems: problems)
             print("== STUCK")
             for (s, reason) in groups.stuck { print("    \(s.title) [\(s.project)]\n      -> \(reason)") }
-            for (name, list) in [("WAITING FOR YOUR ANSWER", groups.answer), ("NEEDS YOU", groups.needsYou), ("WORKING", groups.working), ("WAITING", groups.quiet), ("FINISHED, NOTHING ASKED", groups.finished)] {
+            for (name, list) in [("WAITING FOR YOUR ANSWER", groups.answer), ("NEEDS YOU", groups.needsYou), ("WORKING", groups.working), ("WAITING", groups.quiet)] {
                 print("== \(name)")
                 for group in byApp(list) {
                     print("  \(group.app)")
