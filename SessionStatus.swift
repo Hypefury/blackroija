@@ -1040,8 +1040,8 @@ struct ContentView: View {
                         .padding(.leading, 12)
                     }
                 }
-                section("Waiting for your answer", groups.answer, now: now, urgent: true, problems: problems)
-                section("Needs you", groups.needsYou, now: now, problems: problems)
+                // Sessions blocked on your answer come first, marked by their red dot.
+                section("Needs you", groups.answer + groups.needsYou, now: now, problems: problems)
                 section("Working", groups.working, now: now, problems: problems)
                 section("Waiting", groups.quiet, now: now, dimmed: true, problems: problems)
                 if groups.stuck.isEmpty && groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && store.error == nil && store.loaded {
