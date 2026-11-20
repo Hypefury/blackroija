@@ -123,6 +123,8 @@ struct Session: Identifiable {
     var question: String? = nil
     // The desktop app's own status for the last reply, when it is current.
     var appStatus: AppStatus? = nil
+    // Its turn stopped without finishing: why.
+    var stopped: String? = nil
 }
 
 struct SessionPR: Hashable {
@@ -206,6 +208,8 @@ struct TranscriptState {
     // Its turn ended but a command it started in the background still runs.
     var commandRunning = false
     var question: String? = nil
+    // Its turn stopped without finishing and nothing runs for it: why.
+    var stopped: String? = nil
 }
 
 struct BackgroundWork {
@@ -368,7 +372,7 @@ final class Store: ObservableObject {
     /// Opens the session after the last one opened, in the "next" order;
     /// starts over at the top once past the end. Call on the main thread.
     func openNext() {
-        let queue = nextQueue(sessions, now: Date())
+        let queue = nextQueue(sessions, now: Date(), problems: prProblems(openPRs))
         guard !queue.isEmpty else { NSSound.beep(); return }
         var index = 0
         if let last = lastOpened, let at = queue.firstIndex(where: { $0.id == last }) {
@@ -480,7 +484,8 @@ final class Store: ObservableObject {
             prs: prs,
             grade: grade,
             question: transcript.question,
-            appStatus: appStatus
+            appStatus: appStatus,
+            stopped: transcript.stopped
         )
     }
 
@@ -668,11 +673,18 @@ final class Store: ObservableObject {
         var background = BackgroundWork()
         var replyId: String?
         var replyParts: [String] = []
+        // The newest connection error logged after the last message.
+        var lastError: String?
 
         for line in text.split(separator: "\n").reversed() {
             guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let type = json["type"] as? String, type == "user" || type == "assistant",
-                  let message = json["message"] as? [String: Any]
+                  let type = json["type"] as? String
+            else { continue }
+            if activity == nil, lastError == nil, type == "system", json["subtype"] as? String == "api_error" {
+                let error = json["error"] as? [String: Any]
+                lastError = (error?["formatted"] as? String) ?? (error?["message"] as? String) ?? "connection error"
+            }
+            guard type == "user" || type == "assistant", let message = json["message"] as? [String: Any]
             else { continue }
 
             if activity == nil {
@@ -683,8 +695,14 @@ final class Store: ObservableObject {
                 if !finished {
                     let stalled = Date().timeIntervalSince(modified) > stalledAfter
                     let jobs = liveBackgroundWork(text, transcript: path, cliSessionId: id)
-                    let busy = !stalled || jobs.agents || jobs.commands
-                    return TranscriptState(activity: busy ? .working : .idle, reply: nil)
+                    if !stalled || jobs.agents || jobs.commands { return TranscriptState(activity: .working, reply: nil) }
+                    // You pressed stop: it waits on you, nothing is broken.
+                    if type == "user", "\(message["content"] ?? "")".contains("[Request interrupted by user") {
+                        return TranscriptState(activity: .idle, reply: nil)
+                    }
+                    let reason = lastError.map { "Stopped mid-turn after a connection error (\($0))" }
+                        ?? "Stopped mid-turn without a reply"
+                    return TranscriptState(activity: .idle, reply: nil, stopped: reason)
                 }
                 // Its turn ended, but a helper agent it started is still at
                 // work and will wake it when done.
@@ -768,6 +786,10 @@ struct Row: View {
     let dimmed: Bool
     // The session the "next" shortcut opened last, shaded.
     var current = false
+    // Open-PR problems, to mark its PR numbers.
+    var problems: [String: String] = [:]
+    // Why it is stuck, shown in its own line.
+    var stuck: String? = nil
 
     // Clicking the row opens the session; clicking the PR number opens the
     // PR on GitHub (a button inside the row takes the click first).
@@ -776,6 +798,9 @@ struct Row: View {
             Circle().fill(dotColor).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 Text(session.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                if let stuck {
+                    Text(stuck).font(.system(size: 12, weight: .semibold)).foregroundStyle(.orange).lineLimit(2)
+                }
                 if let need = session.need {
                     Text(need).font(.system(size: 12, weight: session.blockedOnYou ? .semibold : .regular))
                         .foregroundStyle(session.blockedOnYou ? AnyShapeStyle(Color.red) : AnyShapeStyle(.primary))
@@ -788,7 +813,7 @@ struct Row: View {
                         ForEach(Array(shownPRs.enumerated()), id: \.element) { index, pr in
                             if index > 0 { Text(", ").foregroundStyle(.secondary) }
                             PRLink(number: pr.number, url: pr.url,
-                                   suffix: pr.isOpen ? "" : " (\(pr.state.lowercased()))")
+                                   suffix: pr.isOpen ? problems[pr.key].map { " (\($0))" } ?? "" : " (\(pr.state.lowercased()))")
                         }
                         if hiddenPRs > 0 { Text(" +\(hiddenPRs)").foregroundStyle(.secondary) }
                     }
@@ -814,6 +839,7 @@ struct Row: View {
     private var hiddenPRs: Int { max(0, openPRs.count - 4) }
 
     private var dotColor: Color {
+        if stuck != nil { return .orange }
         if session.activity == .working { return .green }
         if session.blockedOnYou { return .red }
         return session.needsYou ? .orange : .gray
@@ -845,15 +871,40 @@ func byApp(_ list: [Session]) -> [(app: String, sessions: [Session])] {
     }
 }
 
+/// Open-PR problems by "owner/name#number", e.g. "failing", "conflicts".
+func prProblems(_ open: [OpenPR]?) -> [String: String] {
+    var problems: [String: String] = [:]
+    for pr in open ?? [] {
+        let key = "\(pr.repo.lowercased())#\(pr.number)"
+        if pr.hasConflicts { problems[key] = "conflicts" } else if pr.isFailing { problems[key] = "failing" }
+    }
+    return problems
+}
+
+extension SessionPR {
+    var key: String { "\(repo.lowercased())#\(number)" }
+}
+
+/// Why a session is stuck, or nil: its turn stopped without finishing, or
+/// it sits idle, asking nothing, while one of its PRs fails or conflicts.
+func stuckReason(_ session: Session, problems: [String: String]) -> String? {
+    if let stopped = session.stopped { return stopped }
+    guard session.activity == .idle, !session.blockedOnYou else { return nil }
+    let broken = session.prs.filter(\.isOpen).compactMap { pr in problems[pr.key].map { (pr.number, $0) } }
+    guard !broken.isEmpty else { return nil }
+    return broken.map { $1 == "conflicts" ? "PR \($0) has conflicts" : "Checks failing on PR \($0)" }
+        .joined(separator: "; ")
+}
+
 /// The order the "next" shortcut walks through: sessions blocked on you
 /// (longest-stuck first), then the rest that need you, where anything idle
 /// for over two hours goes first so it doesn't sink.
-func nextQueue(_ sessions: [Session], now: Date) -> [Session] {
-    let groups = arrange(sessions, now: now)
+func nextQueue(_ sessions: [Session], now: Date, problems: [String: String] = [:]) -> [Session] {
+    let groups = arrange(sessions, now: now, problems: problems)
     let old = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) > 2 * 3600 }
         .sorted { $0.lastActivity < $1.lastActivity }
     let rest = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) <= 2 * 3600 }
-    return groups.answer + old + rest
+    return groups.stuck.map(\.session) + groups.answer + old + rest
 }
 
 func openSession(_ id: String) {
@@ -940,10 +991,15 @@ struct MergeQueue {
 }
 
 /// Splits sessions the way the window shows them.
-func arrange(_ sessions: [Session], now: Date) -> (answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], finished: [Session], stale: Int) {
-    let recent = sessions.filter {
+func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:]) -> (stuck: [(session: Session, reason: String)], answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], finished: [Session], stale: Int) {
+    let all = sessions.filter {
         $0.activity == .working || now.timeIntervalSince($0.lastActivity) < staleAfter
     }
+    // Stuck sessions get their own section on top; the rest split as before.
+    let stuck = all.compactMap { s in stuckReason(s, problems: problems).map { (session: s, reason: $0) } }
+        .sorted { $0.session.lastActivity < $1.session.lastActivity }
+    let stuckIds = Set(stuck.map(\.session.id))
+    let recent = all.filter { !stuckIds.contains($0.id) }
     // Sessions stuck until you act get their own section at the top, the
     // longest-stuck first.
     let answer = recent.filter(\.blockedOnYou).sorted { $0.lastActivity < $1.lastActivity }
@@ -953,7 +1009,7 @@ func arrange(_ sessions: [Session], now: Date) -> (answer: [Session], needsYou: 
     let working = recent.filter { $0.activity == .working }.sorted { $0.lastActivity > $1.lastActivity }
     let quiet = recent.filter { $0.activity == .idle && !$0.needsYou && !$0.isFinished }.sorted { $0.lastActivity > $1.lastActivity }
     let finished = recent.filter(\.isFinished).sorted { $0.lastActivity > $1.lastActivity }
-    return (answer, needsYou, working, quiet, finished, sessions.count - recent.count)
+    return (stuck, answer, needsYou, working, quiet, finished, sessions.count - all.count)
 }
 
 struct ContentView: View {
@@ -962,7 +1018,8 @@ struct ContentView: View {
 
     var body: some View {
         let now = store.now
-        let groups = arrange(store.sessions, now: now)
+        let problems = prProblems(store.openPRs)
+        let groups = arrange(store.sessions, now: now, problems: problems)
 
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
@@ -977,14 +1034,26 @@ struct ContentView: View {
                 if let prError = store.prError {
                     Text("Couldn't read PRs: \(prError)").font(.system(size: 12)).foregroundStyle(.red)
                 }
-                section("Waiting for your answer", groups.answer, now: now, urgent: true)
-                section("Needs you", groups.needsYou, now: now)
-                section("Working", groups.working, now: now)
-                section("Waiting", groups.quiet, now: now, dimmed: true)
+                if !groups.stuck.isEmpty {
+                    Text("Stuck (\(groups.stuck.count))").font(.system(size: 12, weight: .bold)).foregroundStyle(.orange)
+                    ForEach(byApp(groups.stuck.map(\.session)), id: \.app) { group in
+                        Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
+                            .padding(.leading, 4).padding(.top, 2)
+                        ForEach(group.sessions) { s in
+                            Row(session: s, now: now, dimmed: false, current: s.id == store.lastOpened,
+                                problems: problems, stuck: groups.stuck.first { $0.session.id == s.id }?.reason)
+                        }
+                        .padding(.leading, 12)
+                    }
+                }
+                section("Waiting for your answer", groups.answer, now: now, urgent: true, problems: problems)
+                section("Needs you", groups.needsYou, now: now, problems: problems)
+                section("Working", groups.working, now: now, problems: problems)
+                section("Waiting", groups.quiet, now: now, dimmed: true, problems: problems)
                 if !groups.finished.isEmpty {
                     // Finished sessions that ask nothing, folded into one line.
                     DisclosureGroup(isExpanded: $showFinished) {
-                        ForEach(groups.finished) { Row(session: $0, now: now, dimmed: true) }
+                        ForEach(groups.finished) { Row(session: $0, now: now, dimmed: true, problems: problems) }
                             .padding(.leading, 12)
                     } label: {
                         Text("Finished, nothing asked (\(groups.finished.count))")
@@ -993,7 +1062,7 @@ struct ContentView: View {
                             .onTapGesture { showFinished.toggle() }
                     }
                 }
-                if groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && groups.finished.isEmpty && store.error == nil && store.loaded {
+                if groups.stuck.isEmpty && groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && groups.finished.isEmpty && store.error == nil && store.loaded {
                     Text("No recent Hypefury sessions.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 if groups.stale > 0 {
@@ -1048,14 +1117,17 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private func section(_ name: String, _ list: [Session], now: Date, dimmed: Bool = false, urgent: Bool = false) -> some View {
+    private func section(_ name: String, _ list: [Session], now: Date, dimmed: Bool = false, urgent: Bool = false,
+                         problems: [String: String] = [:]) -> some View {
         if !list.isEmpty {
             Text("\(name) (\(list.count))").font(.system(size: 12, weight: .bold))
                 .foregroundStyle(urgent ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
             ForEach(byApp(list), id: \.app) { group in
                 Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                     .padding(.leading, 4).padding(.top, 2)
-                ForEach(group.sessions) { Row(session: $0, now: now, dimmed: dimmed, current: $0.id == store.lastOpened) }
+                ForEach(group.sessions) {
+                    Row(session: $0, now: now, dimmed: dimmed, current: $0.id == store.lastOpened, problems: problems)
+                }
                     .padding(.leading, 12)
             }
         }
@@ -1147,7 +1219,11 @@ enum SessionStatusApp {
             let now = Date()
             let store = Store(gradeInBackground: false)
             let all = (try? store.scan()) ?? []
-            let groups = arrange(all, now: now)
+            let open = try? Store.loadOpenPRs()
+            let problems = prProblems(open)
+            let groups = arrange(all, now: now, problems: problems)
+            print("== STUCK")
+            for (s, reason) in groups.stuck { print("    \(s.title) [\(s.project)]\n      -> \(reason)") }
             for (name, list) in [("WAITING FOR YOUR ANSWER", groups.answer), ("NEEDS YOU", groups.needsYou), ("WORKING", groups.working), ("WAITING", groups.quiet), ("FINISHED, NOTHING ASKED", groups.finished)] {
                 print("== \(name)")
                 for group in byApp(list) {
@@ -1160,7 +1236,7 @@ enum SessionStatusApp {
                 }
             }
             print("\(groups.stale) more idle for over a day")
-            if let open = try? Store.loadOpenPRs() {
+            if let open {
                 let queue = MergeQueue(open, sessions: all)
                 for (name, list) in [("CHECKS PASSING", queue.ready), ("CHECKS FAILING", queue.failing),
                                      ("CONFLICTS", queue.conflicts), ("NO SESSION", queue.noSession)] {
@@ -1169,7 +1245,7 @@ enum SessionStatusApp {
             }
             for s in all where s.prs.count > 1 { print("  \(s.title): PRs " + s.prs.map { "\($0.number) \($0.state)" }.joined(separator: ", ")) }
             print("== NEXT KEY ORDER")
-            for (i, s) in nextQueue(all, now: now).enumerated() { print("  \(i + 1). \(s.title)") }
+            for (i, s) in nextQueue(all, now: now, problems: problems).enumerated() { print("  \(i + 1). \(s.title)") }
             return
         }
         let app = NSApplication.shared
