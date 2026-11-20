@@ -1045,12 +1045,6 @@ struct ContentView: View {
                 if let error = store.error {
                     Text("Couldn't read sessions: \(error)").font(.system(size: 12)).foregroundStyle(.red)
                 }
-                if let open = store.openPRs {
-                    mergeStrip(MergeQueue(open, sessions: store.sessions))
-                }
-                if let prError = store.prError {
-                    Text("Couldn't read PRs: \(prError)").font(.system(size: 12)).foregroundStyle(.red)
-                }
                 if !groups.stuck.isEmpty {
                     Text("Stuck (\(groups.stuck.count))").font(.system(size: 12, weight: .bold)).foregroundStyle(.orange)
                     ForEach(byApp(groups.stuck.map(\.session)), id: \.app) { group in
@@ -1073,6 +1067,13 @@ struct ContentView: View {
                 if groups.stale > 0 {
                     Text("\(groups.stale) more idle for over a day")
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
+                }
+                if let open = store.openPRs {
+                    mergeStrip(MergeQueue(open, sessions: store.sessions))
+                        .padding(.top, 8)
+                }
+                if let prError = store.prError {
+                    Text("Couldn't read PRs: \(prError)").font(.system(size: 12)).foregroundStyle(.red)
                 }
             }
             .padding(12)
