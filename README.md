@@ -14,7 +14,7 @@ Sessions are sorted into sections, and grouped by app (Web app, Mobile, Website)
 - **Needs you**: the session is idle and waiting on you. A red dot means it's blocked until you answer: a question card, a plan to approve, or something the session marked as blocking. These come first, oldest first. A session that says it's done stays here until you archive it.
 - **Working** (green dot): Claude is mid-turn, or a helper agent or background job it started is still running.
 - **Waiting** (dimmed): idle, but only waiting on CI or another PR.
-- Sessions idle for over a day are only counted, at the bottom.
+- Sessions idle for over a week are only counted, at the bottom.
 
 Each row shows the title, how long it's been idle and all its open PRs. A PR marked "(failing)" has failing checks, and one marked "(conflicts)" has merge conflicts. Click a row to open the session, or click a PR number to open it on GitHub. Hover over a row to see what the session is asking for.
 

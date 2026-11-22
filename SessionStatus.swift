@@ -45,7 +45,7 @@ let refreshSeconds: TimeInterval = 5
 // How often open PRs are fetched from GitHub (read-only, through `gh`).
 let prRefreshSeconds: TimeInterval = 60
 let ghCandidates = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
-let staleAfter: TimeInterval = 24 * 3600
+let staleAfter: TimeInterval = 7 * 24 * 3600
 // A turn whose log hasn't moved for this long, without a finished reply,
 // was stopped or crashed rather than still working.
 let stalledAfter: TimeInterval = 15 * 60
@@ -1060,7 +1060,7 @@ struct ContentView: View {
                     Text("No recent Hypefury sessions.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 if groups.stale > 0 {
-                    Text("\(groups.stale) more idle for over a day")
+                    Text("\(groups.stale) more idle for over a week")
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
                 }
                 if let open = store.openPRs {
@@ -1263,7 +1263,7 @@ enum SessionStatusApp {
                     }
                 }
             }
-            print("\(groups.stale) more idle for over a day")
+            print("\(groups.stale) more idle for over a week")
             if let open {
                 let queue = MergeQueue(open, sessions: all)
                 for (name, list) in [("PRS SHOWN", queue.shown), ("CHECKS PASSING", queue.ready), ("CHECKS FAILING", queue.failing),
