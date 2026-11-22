@@ -912,10 +912,14 @@ func stuckReason(_ session: Session, problems: [String: String]) -> String? {
 /// for over two hours goes first so it doesn't sink.
 func nextQueue(_ sessions: [Session], now: Date, problems: [String: String] = [:]) -> [Session] {
     let groups = arrange(sessions, now: now, problems: problems)
+    // The window lists newest first; this walk keeps its own order.
+    let stuck = groups.stuck.map(\.session).sorted { $0.lastActivity < $1.lastActivity }
+    let answer = groups.answer.sorted { $0.lastActivity < $1.lastActivity }
     let old = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) > 2 * 3600 }
         .sorted { $0.lastActivity < $1.lastActivity }
     let rest = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) <= 2 * 3600 }
-    return groups.stuck.map(\.session) + groups.answer + old + rest
+        .sorted { $0.grade.rank != $1.grade.rank ? $0.grade.rank < $1.grade.rank : $0.lastActivity > $1.lastActivity }
+    return stuck + answer + old + rest
 }
 
 func openSession(_ id: String) {
@@ -1009,16 +1013,15 @@ func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:])
         $0.activity == .working || now.timeIntervalSince($0.lastActivity) < staleAfter
     }
     // Stuck sessions get their own section on top; the rest split as before.
+    // Every list is newest first: the session that replied most recently
+    // comes first.
     let stuck = all.compactMap { s in stuckReason(s, problems: problems).map { (session: s, reason: $0) } }
-        .sorted { $0.session.lastActivity < $1.session.lastActivity }
+        .sorted { $0.session.lastActivity > $1.session.lastActivity }
     let stuckIds = Set(stuck.map(\.session.id))
     let recent = all.filter { !stuckIds.contains($0.id) }
-    // Sessions stuck until you act get their own section at the top, the
-    // longest-stuck first.
-    let answer = recent.filter(\.blockedOnYou).sorted { $0.lastActivity < $1.lastActivity }
-    let needsYou = recent.filter { $0.needsYou && !$0.blockedOnYou }.sorted {
-        $0.grade.rank != $1.grade.rank ? $0.grade.rank < $1.grade.rank : $0.lastActivity > $1.lastActivity
-    }
+    // Sessions blocked on your answer are listed before the rest that need you.
+    let answer = recent.filter(\.blockedOnYou).sorted { $0.lastActivity > $1.lastActivity }
+    let needsYou = recent.filter { $0.needsYou && !$0.blockedOnYou }.sorted { $0.lastActivity > $1.lastActivity }
     let working = recent.filter { $0.activity == .working }.sorted { $0.lastActivity > $1.lastActivity }
     let quiet = recent.filter { $0.activity == .idle && !$0.needsYou }.sorted { $0.lastActivity > $1.lastActivity }
     return (stuck, answer, needsYou, working, quiet, sessions.count - all.count)
