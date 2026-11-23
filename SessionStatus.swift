@@ -622,6 +622,9 @@ final class Store: ObservableObject {
             .appendingPathComponent("\(cliSessionId)/subagents")
         for line in log.split(separator: "\n") {
             if line.contains("<task-notification>") {
+                // An agent that stopped with work of its own still running says
+                // it may resume and notifies again if it does: not finished yet.
+                if line.contains("may resume on its own") { continue }
                 for id in matches(#"<task-id>([^<]+)</task-id>"#, in: line) { finished.insert(id) }
                 continue
             }
