@@ -1,6 +1,6 @@
 # Session Status
 
-A small floating Mac window that lists your open Claude Code sessions (the Code tab of the Claude desktop app) for the Hypefury repos. It shows which sessions are working, which need you, and which are stuck, plus your open PRs. Work in one session at a time and jump to the next one from here.
+A small floating Mac window that lists your open Claude Code sessions (the Code tab of the Claude desktop app), with the Hypefury repos first. It shows which sessions are working, which need you, and which are stuck, plus your open PRs. Work in one session at a time and jump to the next one from here.
 
 It only reads files on your Mac and GitHub. It never sends anything to a session or changes a PR.
 
@@ -56,7 +56,7 @@ cd ~/workspace/session-status && ./build.sh && pkill -x SessionStatus; sleep 1; 
 
 ## Setup for your own folders
 
-The window shows sessions whose folder belongs to one of these repos. It finds them by their git folder, so worktrees count too. Edit `projects` at the top of `SessionStatus.swift` if your clones live elsewhere:
+The window shows sessions from every folder. Sessions in these repos are grouped under their app's name, first; the rest are grouped under their repo's folder name. It finds the repo by its git folder, so worktrees count too. Edit `projects` at the top of `SessionStatus.swift` if your clones live elsewhere:
 
 ```swift
 let projects: [String: String] = [
@@ -66,7 +66,7 @@ let projects: [String: String] = [
 ]
 ```
 
-`repos` maps each label to its GitHub repo, for the PR list. Your GitHub login decides which PRs are "yours".
+`repos` maps each label to its GitHub repo, for the PR list. The PR list also covers any other repo a session has an open PR on. Your GitHub login decides which PRs are "yours".
 
 ## Checking it from the terminal
 

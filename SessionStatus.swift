@@ -1,5 +1,5 @@
-// A small always-on-top window listing open Claude desktop-app sessions for
-// the Hypefury repos, sorted so the ones that need the least effort from you
+// A small always-on-top window listing open Claude desktop-app sessions,
+// sorted so the ones that need the least effort from you
 // come first.
 //
 // It reads the app's own files, never talks to the app:
@@ -26,7 +26,8 @@ let sessionsRoot = "\(home)/Library/Application Support/Claude/claude-code-sessi
 let transcriptsRoot = "\(home)/.claude/projects"
 let gradesFile = "\(home)/Library/Application Support/SessionStatus/grades.json"
 
-// Repo git folder -> label shown in the window.
+// Repo git folder -> label shown in the window. Sessions in any other
+// folder are listed too, under their repo's folder name.
 let projects: [String: String] = [
     "\(home)/workspace/hypefury-v2/.git": "Web app",
     "\(home)/workspace/hypefury-website/.git": "Website",
@@ -146,8 +147,12 @@ struct OpenPR: Decodable, Hashable {
     let statusCheckRollup: [Check]
     let baseRefName: String
     let author: Author?
+    let webURL: String
     var repo = ""
     var mine = false  // opened by you
+    // Every "owner/name#number" it goes by: a moved repo answers to its old
+    // name too, and sessions may have recorded either.
+    var keys: Set<String> = []
 
     struct Author: Decodable, Hashable { let login: String }
 
@@ -158,6 +163,7 @@ struct OpenPR: Decodable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case number, title, isDraft, mergeable, mergeStateStatus, statusCheckRollup, baseRefName, author
+        case webURL = "url"
     }
 
     var hasConflicts: Bool { mergeable == "CONFLICTING" }
@@ -324,11 +330,14 @@ final class Store: ObservableObject {
     @Published var loaded = false
     // The session the "next" shortcut opened last; the next press moves on.
     @Published var lastOpened: String?
-    // Open PRs across the three repos, nil until the first fetch.
+    // Open PRs across the known repos and the ones open sessions have PRs
+    // on, nil until the first fetch.
     @Published var openPRs: [OpenPR]?
     @Published var prError: String?
     private let prQueue = DispatchQueue(label: "session-status.prs")
     private var prTimer: Timer?
+    // The repos the last PR fetch covered; a new one triggers a fetch.
+    private var prRepos: Set<String> = []
 
     private func startPRs() {
         fetchPRs()
@@ -338,8 +347,10 @@ final class Store: ObservableObject {
     }
 
     func fetchPRs() {
+        let list = prRepoList(sessions)
+        prRepos = list
         prQueue.async {
-            let result = Result { try Self.loadOpenPRs() }
+            let result = Result { try Self.loadOpenPRs(list) }
             DispatchQueue.main.async {
                 switch result {
                 case .success(let prs): self.openPRs = prs; self.prError = nil
@@ -349,7 +360,7 @@ final class Store: ObservableObject {
         }
     }
 
-    static func loadOpenPRs() throws -> [OpenPR] {
+    static func loadOpenPRs(_ repoList: Set<String>) throws -> [OpenPR] {
         guard let gh = ghCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             throw NSError(domain: "SessionStatus", code: 1, userInfo: [NSLocalizedDescriptionKey: "GitHub's gh tool not found"])
         }
@@ -365,11 +376,11 @@ final class Store: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         whoami.waitUntilExit()
         var all: [OpenPR] = []
-        for repo in Set(repos.values).sorted() {
+        for repo in repoList.sorted() {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: gh)
             process.arguments = ["pr", "list", "-R", repo, "--state", "open", "--limit", "100",
-                                 "--json", "number,title,isDraft,mergeable,mergeStateStatus,statusCheckRollup,baseRefName,author"]
+                                 "--json", "number,title,isDraft,mergeable,mergeStateStatus,statusCheckRollup,baseRefName,author,url"]
             let out = Pipe()
             process.standardOutput = out
             process.standardError = FileHandle.nullDevice
@@ -377,14 +388,25 @@ final class Store: ObservableObject {
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
+                // A repo only a session mentions may be gone or private to
+                // someone else: skip it rather than lose the whole list.
+                if !Set(repos.values).contains(repo) { continue }
                 throw NSError(domain: "SessionStatus", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(repo)"])
             }
-            var prs = try JSONDecoder().decode([OpenPR].self, from: data)
-            for i in prs.indices {
-                prs[i].repo = repo
-                prs[i].mine = !login.isEmpty && prs[i].author?.login.lowercased() == login
+            for var pr in try JSONDecoder().decode([OpenPR].self, from: data) {
+                let asked = "\(repo.lowercased())#\(pr.number)"
+                // A moved repo lists the same PRs under both names: keep one.
+                if let i = all.firstIndex(where: { $0.webURL == pr.webURL }) {
+                    all[i].keys.insert(asked)
+                    continue
+                }
+                // The repo's current name, from "https://github.com/Owner/name/pull/1".
+                let parts = URL(string: pr.webURL)?.pathComponents ?? []
+                pr.repo = parts.count >= 3 ? "\(parts[1])/\(parts[2])" : repo
+                pr.mine = !login.isEmpty && pr.author?.login.lowercased() == login
+                pr.keys = [pr.key, asked]
+                all.append(pr)
             }
-            all += prs
         }
         return all
     }
@@ -437,6 +459,7 @@ final class Store: ObservableObject {
                 case .success(let list):
                     self.sessions = list
                     self.loaded = true
+                    if !prRepoList(list).isSubset(of: self.prRepos) { self.fetchPRs() }
                     self.error = nil
                 case .failure(let err):
                     self.error = err.localizedDescription
@@ -588,13 +611,27 @@ final class Store: ObservableObject {
             // worktree's .git file points back into the repo's .git folder.
             if let common = worktreeCommonDir(origin), let label = projects[common] { return label }
         }
-        // Last resort: the repo its PR was opened on.
+        // The repo its PR was opened on.
         for pr in file.prs ?? [] {
             if let repo = pr.repo, let label = repos.first(where: { $0.value.lowercased() == repo.lowercased() })?.key {
                 return label
             }
         }
-        return nil
+        // Any other folder: its repo's folder name.
+        if let dir = file.gitAnchors?.compactMap(\.commonDir).first {
+            return folderName(dir)
+        }
+        if let origin = file.originCwd {
+            return folderName(worktreeCommonDir(origin) ?? origin)
+        }
+        return "Other"
+    }
+
+    // ".../session-status/.git" -> "session-status"
+    private func folderName(_ path: String) -> String {
+        var url = URL(fileURLWithPath: path)
+        if url.lastPathComponent == ".git" { url.deleteLastPathComponent() }
+        return url.lastPathComponent
     }
 
     private func transcriptPath(_ cliSessionId: String) -> String? {
@@ -873,8 +910,25 @@ let repos = [
     "Website": "Hypefury/hypefury-website",
 ]
 
-/// The order apps are listed in within each section.
+/// The order apps are listed in within each section; other projects follow
+/// in name order.
 let appOrder = ["Web app", "Mobile", "Website"]
+
+/// The repos to list PRs for: the known ones, plus any a session has an open
+/// PR on. Each repo once, whatever its capitalization.
+func prRepoList(_ sessions: [Session]) -> Set<String> {
+    var byKey: [String: String] = [:]
+    for repo in repos.values.sorted() + sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
+        if byKey[repo.lowercased()] == nil { byKey[repo.lowercased()] = repo }
+    }
+    return Set(byKey.values)
+}
+
+/// The heading a repo's PRs go under: its app, else its name.
+func repoLabel(_ repo: String) -> String {
+    repos.first { $0.value.lowercased() == repo.lowercased() }?.key
+        ?? String(repo.split(separator: "/").last ?? Substring(repo))
+}
 
 /// Splits one section's sessions by app, keeping their order inside each app.
 func byApp(_ list: [Session]) -> [(app: String, sessions: [Session])] {
@@ -889,8 +943,9 @@ func byApp(_ list: [Session]) -> [(app: String, sessions: [Session])] {
 func prProblems(_ open: [OpenPR]?) -> [String: String] {
     var problems: [String: String] = [:]
     for pr in open ?? [] {
-        let key = "\(pr.repo.lowercased())#\(pr.number)"
-        if pr.hasConflicts { problems[key] = "conflicts" } else if pr.isFailing { problems[key] = "failing" }
+        for key in pr.keys {
+            if pr.hasConflicts { problems[key] = "conflicts" } else if pr.isFailing { problems[key] = "failing" }
+        }
     }
     return problems
 }
@@ -1000,11 +1055,11 @@ struct MergeQueue {
 
     init(_ open: [OpenPR], sessions: [Session]) {
         let tracked = Set(sessions.flatMap { $0.prs.map { "\($0.repo.lowercased())#\($0.number)" } })
-        shown = open.filter { $0.mine || tracked.contains($0.key) }.sorted { $0.number > $1.number }
+        shown = open.filter { $0.mine || !$0.keys.isDisjoint(with: tracked) }.sorted { $0.number > $1.number }
         ready = shown.filter(\.isReady)
         failing = shown.filter { !$0.isDraft && $0.isFailing }
         conflicts = shown.filter(\.hasConflicts)
-        noSession = shown.filter { !tracked.contains($0.key) }
+        noSession = shown.filter { $0.keys.isDisjoint(with: tracked) }
     }
 
     var isEmpty: Bool { shown.isEmpty }
@@ -1064,7 +1119,7 @@ struct ContentView: View {
                 section("Working", groups.working, now: now, problems: problems)
                 section("Waiting", groups.quiet, now: now, dimmed: true, problems: problems)
                 if groups.stuck.isEmpty && groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && store.error == nil && store.loaded {
-                    Text("No recent Hypefury sessions.").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("No recent sessions.").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 if groups.stale > 0 {
                     Text("\(groups.stale) more idle for over a week")
@@ -1098,8 +1153,9 @@ struct ContentView: View {
             let noSession = Set(queue.noSession)
             let rank: (OpenPR) -> Int = { failing.contains($0) ? 0 : conflicts.contains($0) ? 1 : ready.contains($0) ? 2 : 3 }
             let prs = queue.shown.sorted { rank($0) != rank($1) ? rank($0) < rank($1) : $0.number > $1.number }
-            let apps = appOrder.compactMap { app -> (app: String, prs: [OpenPR])? in
-                let list = prs.filter { $0.repo == repos[app] }
+            let labels = Set(prs.map { repoLabel($0.repo) })
+            let apps = (appOrder + labels.subtracting(appOrder).sorted()).compactMap { app -> (app: String, prs: [OpenPR])? in
+                let list = prs.filter { repoLabel($0.repo) == app }
                 return list.isEmpty ? nil : (app, list)
             }
             VStack(alignment: .leading, spacing: 3) {
@@ -1254,7 +1310,7 @@ enum SessionStatusApp {
             let now = Date()
             let store = Store(gradeInBackground: false)
             let all = (try? store.scan()) ?? []
-            let open = try? Store.loadOpenPRs()
+            let open = try? Store.loadOpenPRs(prRepoList(all))
             let problems = prProblems(open)
             let groups = arrange(all, now: now, problems: problems)
             print("== STUCK")
