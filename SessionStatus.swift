@@ -1058,8 +1058,9 @@ struct ContentView: View {
                         .padding(.leading, 12)
                     }
                 }
-                // Sessions blocked on your answer come first, marked by their red dot.
-                section("Needs you", groups.answer + groups.needsYou, now: now, problems: problems)
+                // Red and orange sessions share one list, newest reply first.
+                section("Needs you", (groups.answer + groups.needsYou).sorted { $0.lastActivity > $1.lastActivity },
+                        now: now, problems: problems)
                 section("Working", groups.working, now: now, problems: problems)
                 section("Waiting", groups.quiet, now: now, dimmed: true, problems: problems)
                 if groups.stuck.isEmpty && groups.answer.isEmpty && groups.needsYou.isEmpty && groups.working.isEmpty && groups.quiet.isEmpty && store.error == nil && store.loaded {
