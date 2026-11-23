@@ -521,7 +521,11 @@ final class Store: ObservableObject {
         if transcript.agentRunning {
             var asksYou: Bool
             switch appStatus {
-            case .blocked, .reviewReady: asksYou = true
+            case .blocked: asksYou = true
+            // "Ready for review" with nothing for you to do is where it
+            // stands until its helper agent reports back.
+            case .reviewReady:
+                asksYou = !(file.postTurnSummary?.needs_action ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             case .finished: asksYou = false
             case nil:
                 switch grade {
@@ -695,6 +699,11 @@ final class Store: ObservableObject {
             } else if let id = result["resumedAgentId"] as? String {
                 // A message to a finished helper agent starts it again: only a
                 // "finished" notice after this one counts.
+                started[id] = ("\(subagents)/agent-\(id).jsonl", true)
+                finished.remove(id)
+            } else if let id = matches(#"Message queued for delivery to ([A-Za-z0-9_-]+)"#, in: line).first {
+                // A message to a helper agent that still runs: it was started
+                // long before, maybe outside the part of the log read here.
                 started[id] = ("\(subagents)/agent-\(id).jsonl", true)
                 finished.remove(id)
             }
