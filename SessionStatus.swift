@@ -758,11 +758,22 @@ final class Store: ObservableObject {
         var replyParts: [String] = []
         // The newest connection error logged after the last message.
         var lastError: String?
+        // Claude was called after the line being read.
+        var calledSince = false
 
         for line in text.split(separator: "\n").reversed() {
             guard let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                   let type = json["type"] as? String
             else { continue }
+            if type == "api-request" { calledSince = true }
+            // A helper agent's "finished" notice that started no new turn
+            // (its report already came as a message): the reply before it
+            // is still the session's last word.
+            if activity == nil, !calledSince, type == "user",
+               let content = (json["message"] as? [String: Any])?["content"] as? String,
+               content.hasPrefix("<task-notification>") {
+                continue
+            }
             if activity == nil, lastError == nil, type == "system", json["subtype"] as? String == "api_error" {
                 let error = json["error"] as? [String: Any]
                 lastError = (error?["formatted"] as? String) ?? (error?["message"] as? String) ?? "connection error"
