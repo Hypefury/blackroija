@@ -708,6 +708,20 @@ final class Store: ObservableObject {
                 finished.remove(id)
             }
         }
+        // A helper agent started before the part of the log read here (big
+        // tool results, like screenshots, push its launch out): its own
+        // record says it runs in the background and hasn't finished.
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: subagents)) ?? []
+        where name.hasPrefix("agent-") && name.hasSuffix(".meta.json") {
+            let id = String(name.dropFirst("agent-".count).dropLast(".meta.json".count))
+            guard started[id] == nil,
+                  let data = FileManager.default.contents(atPath: "\(subagents)/\(name)"),
+                  let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  meta["requestShape"] as? String == "background",
+                  meta["finished"] as? Bool != true
+            else { continue }
+            started[id] = ("\(subagents)/agent-\(id).jsonl", true)
+        }
         let now = Date()
         var work = BackgroundWork()
         for (id, job) in started where !finished.contains(id) {
