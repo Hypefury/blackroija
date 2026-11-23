@@ -219,6 +219,8 @@ struct TranscriptState {
     let reply: LastReply?
     // Its turn ended but a command it started in the background still runs.
     var commandRunning = false
+    // Its turn ended but a helper agent it started still works and will wake it.
+    var agentRunning = false
     var question: String? = nil
     // Its turn stopped without finishing and nothing runs for it: why.
     var stopped: String? = nil
@@ -500,7 +502,7 @@ final class Store: ObservableObject {
         // The app's status, when it describes the reply the log ends on.
         // Skipped while a background command runs: the status doesn't say
         // whether the session is only waiting on CI, Haiku does.
-        let appStatus = activity == .idle && !transcript.commandRunning && transcript.question == nil
+        var appStatus = activity == .idle && !transcript.commandRunning && transcript.question == nil
             ? currentAppStatus(file, replyId: transcript.reply?.id)
             : nil
         var grade: GradeState = activity == .working || appStatus != nil
@@ -513,6 +515,22 @@ final class Store: ObservableObject {
             var onlyWaiting = false
             if case .graded(let g) = grade { onlyWaiting = g.effort == .waiting }
             if !onlyWaiting { activity = .working; grade = .none }
+        }
+        // A helper agent still working: the session wakes when it's done, so
+        // it is working, unless its reply asks you something meanwhile.
+        if transcript.agentRunning {
+            var asksYou: Bool
+            switch appStatus {
+            case .blocked, .reviewReady: asksYou = true
+            case .finished: asksYou = false
+            case nil:
+                switch grade {
+                case .graded(let g): asksYou = g.effort != .waiting && g.effort != .nothing
+                case .failed: asksYou = true
+                case .grading, .none: asksYou = false
+                }
+            }
+            if !asksYou { activity = .working; grade = .none; appStatus = nil }
         }
         let prs: [SessionPR] = (file.prs ?? []).compactMap { pr in
             guard let number = pr.prNumber, let repo = pr.repo ?? repos[project] else { return nil }
@@ -769,10 +787,10 @@ final class Store: ObservableObject {
                         ?? "Stopped mid-turn without a reply"
                     return TranscriptState(activity: .idle, reply: nil, stopped: reason)
                 }
-                // Its turn ended, but a helper agent it started is still at
-                // work and will wake it when done.
+                // Its turn ended, maybe with a helper agent still at work that
+                // will wake it when done. The reply decides whether it also
+                // asks you something meanwhile.
                 background = liveBackgroundWork(text, transcript: path, cliSessionId: id)
-                if background.agents { return TranscriptState(activity: .working, reply: nil) }
                 activity = .idle
                 replyId = json["uuid"] as? String
             }
@@ -791,8 +809,9 @@ final class Store: ObservableObject {
 
         guard let id = replyId else { return TranscriptState(activity: activity ?? .idle, reply: nil) }
         let reply = replyParts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if background.agents && reply.isEmpty { return TranscriptState(activity: .working, reply: nil) }
         return TranscriptState(activity: .idle, reply: reply.isEmpty ? nil : LastReply(id: id, text: reply),
-                               commandRunning: background.commands)
+                               commandRunning: background.commands, agentRunning: background.agents)
     }
 }
 
