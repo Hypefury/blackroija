@@ -674,6 +674,11 @@ final class Store: ObservableObject {
                 started[id] = (file, false)
             } else if result["isAsync"] as? Bool == true, let id = result["agentId"] as? String {
                 started[id] = ("\(subagents)/agent-\(id).jsonl", true)
+            } else if let id = result["resumedAgentId"] as? String {
+                // A message to a finished helper agent starts it again: only a
+                // "finished" notice after this one counts.
+                started[id] = ("\(subagents)/agent-\(id).jsonl", true)
+                finished.remove(id)
             }
         }
         let now = Date()
