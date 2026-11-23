@@ -994,6 +994,14 @@ extension SessionPR {
 func stuckReason(_ session: Session, problems: [String: String]) -> String? {
     if let stopped = session.stopped { return stopped }
     guard session.activity == .idle, !session.blockedOnYou else { return nil }
+    // A reply that asks you something (test this, answer that) waits on you,
+    // not on its PR. One still being read isn't stuck yet either.
+    if case .reviewReady = session.appStatus { return nil }
+    switch session.grade {
+    case .graded(let g) where g.effort != .nothing && g.effort != .waiting: return nil
+    case .grading: return nil
+    default: break
+    }
     let broken = session.prs.filter(\.isOpen).compactMap { pr in problems[pr.key].map { (pr.number, $0) } }
     guard !broken.isEmpty else { return nil }
     return broken.map { $1 == "conflicts" ? "PR \($0) has conflicts" : "Checks failing on PR \($0)" }
