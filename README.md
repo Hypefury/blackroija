@@ -4,10 +4,6 @@ A small floating Mac window that lists your open Claude Code sessions (the Code 
 
 It only reads files on your Mac and GitHub. It never sends anything to a session or changes a PR.
 
-<img src="docs/overview.png" alt="The blackroija window: one stuck session, five that need you, three working and one waiting" width="446">
-
-The screenshots here use made-up sessions and PRs.
-
 ## Why use it instead of the sidebar?
 
 The Claude desktop app's sidebar groups your sessions by project, so checking on all of them means moving from one project to the next, and it keeps every old session in view. blackroija puts all of it in one place:
@@ -18,7 +14,11 @@ The Claude desktop app's sidebar groups your sessions by project, so checking on
 - **Only what's recent.** Sessions idle for over a week are hidden and counted at the bottom, so the list stays short.
 - **Quiet.** No notifications, no badges. You look when you want to.
 
-It only reads: start, archive and find older sessions in the app's own sidebar.
+To start or archive a session, or to find an older one, use the app's own sidebar.
+
+<img src="docs/overview.png" alt="The blackroija window: one stuck session, five that need you, three working and one waiting" width="446">
+
+The screenshots here use made-up sessions and PRs.
 
 ## What you see
 
