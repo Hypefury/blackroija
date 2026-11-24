@@ -26,7 +26,7 @@ import SwiftUI
 let home = FileManager.default.homeDirectoryForCurrentUser.path
 let sessionsRoot = "\(home)/Library/Application Support/Claude/claude-code-sessions"
 let transcriptsRoot = "\(home)/.claude/projects"
-let gradesFile = "\(home)/Library/Application Support/SessionStatus/grades.json"
+let gradesFile = "\(home)/Library/Application Support/blackroija/grades.json"
 // The desktop app's log, and the one before it (it starts a new one at 10 MB).
 let appLog = "\(home)/Library/Logs/Claude/main.log"
 let appLogBefore = "\(home)/Library/Logs/Claude/main1.log"
@@ -341,7 +341,7 @@ final class Store: ObservableObject {
     // on, nil until the first fetch.
     @Published var openPRs: [OpenPR]?
     @Published var prError: String?
-    private let prQueue = DispatchQueue(label: "session-status.prs")
+    private let prQueue = DispatchQueue(label: "blackroija.prs")
     private var prTimer: Timer?
     // The repos the last PR fetch covered; a new one triggers a fetch.
     private var prRepos: Set<String> = []
@@ -369,7 +369,7 @@ final class Store: ObservableObject {
 
     static func loadOpenPRs(_ repoList: Set<String>) throws -> [OpenPR] {
         guard let gh = ghCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw NSError(domain: "SessionStatus", code: 1, userInfo: [NSLocalizedDescriptionKey: "GitHub's gh tool not found"])
+            throw NSError(domain: "blackroija", code: 1, userInfo: [NSLocalizedDescriptionKey: "GitHub's gh tool not found"])
         }
         // Your GitHub login, to tell your PRs from teammates'.
         let whoami = Process()
@@ -398,7 +398,7 @@ final class Store: ObservableObject {
                 // A repo only a session mentions may be gone or private to
                 // someone else: skip it rather than lose the whole list.
                 if !Set(repos.values).contains(repo) { continue }
-                throw NSError(domain: "SessionStatus", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(repo)"])
+                throw NSError(domain: "blackroija", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(repo)"])
             }
             for var pr in try JSONDecoder().decode([OpenPR].self, from: data) {
                 let asked = "\(repo.lowercased())#\(pr.number)"
@@ -432,8 +432,8 @@ final class Store: ObservableObject {
     }
 
     // Everything below is touched only on `work`.
-    private let work = DispatchQueue(label: "session-status.work")
-    private let gradeQueue = DispatchQueue(label: "session-status.grade")
+    private let work = DispatchQueue(label: "blackroija.work")
+    private let gradeQueue = DispatchQueue(label: "blackroija.grade")
     private var transcriptPaths: [String: String] = [:]
     private var grades: [String: Grade] = [:]
     private var grading: Set<String> = []
@@ -706,7 +706,7 @@ final class Store: ObservableObject {
         return "Other"
     }
 
-    // ".../session-status/.git" -> "session-status"
+    // ".../blackroija/.git" -> "blackroija"
     private func folderName(_ path: String) -> String {
         var url = URL(fileURLWithPath: path)
         if url.lastPathComponent == ".git" { url.deleteLastPathComponent() }
@@ -1272,7 +1272,7 @@ struct ContentView: View {
             Button("Open next session (⌃⌥N)") { store.openNext() }
             Button("Refresh") { store.reload() }
             Divider()
-            Button("Quit Session Status") { NSApp.terminate(nil) }
+            Button("Quit blackroija") { NSApp.terminate(nil) }
         }
     }
 
@@ -1376,7 +1376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let id = EventHotKeyID(signature: OSType(0x5353_4e58), id: 1) // "SSNX"
         let status = RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(controlKey | optionKey), id,
                                          GetApplicationEventTarget(), 0, &hotKey)
-        NSLog("SessionStatus: next-session key registered with status %d", status)
+        NSLog("blackroija: next-session key registered with status %d", status)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1412,12 +1412,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         panel.contentView = blur
 
-        if !panel.setFrameUsingName("SessionStatusPanel") {
+        if !panel.setFrameUsingName("BlackRoijaPanel") {
             if let screen = NSScreen.main?.visibleFrame {
                 panel.setFrameOrigin(NSPoint(x: screen.maxX - 340, y: screen.maxY - 480))
             }
         }
-        panel.setFrameAutosaveName("SessionStatusPanel")
+        panel.setFrameAutosaveName("BlackRoijaPanel")
         panel.orderFrontRegardless()
         registerNextKey()
         store.start()
@@ -1435,7 +1435,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
-enum SessionStatusApp {
+enum BlackRoijaApp {
     static func main() {
         // `--print` grades what needs grading (waiting for each), lists what
         // the window would show, then exits.

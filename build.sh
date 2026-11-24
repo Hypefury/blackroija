@@ -1,10 +1,10 @@
 #!/bin/sh
-# Builds "Session Status.app" next to this script.
+# Builds "blackroija.app" next to this script.
 # Compiles into a staging folder first, so a failed build leaves the
 # current app in place.
 set -e
 cd "$(dirname "$0")"
-APP="Session Status.app"
+APP="blackroija.app"
 STAGE=".build-staging"
 rm -rf "./$STAGE"
 mkdir -p "./$STAGE/$APP/Contents/MacOS"
@@ -13,9 +13,9 @@ cat > "./$STAGE/$APP/Contents/Info.plist" <<'EOF'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Session Status</string>
-  <key>CFBundleIdentifier</key><string>local.session-status</string>
-  <key>CFBundleExecutable</key><string>SessionStatus</string>
+  <key>CFBundleName</key><string>blackroija</string>
+  <key>CFBundleIdentifier</key><string>local.blackroija</string>
+  <key>CFBundleExecutable</key><string>blackroija</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>LSUIElement</key><true/>
@@ -23,7 +23,7 @@ cat > "./$STAGE/$APP/Contents/Info.plist" <<'EOF'
 </dict>
 </plist>
 EOF
-swiftc -O -parse-as-library SessionStatus.swift -o "./$STAGE/$APP/Contents/MacOS/SessionStatus"
+swiftc -O -parse-as-library blackroija.swift -o "./$STAGE/$APP/Contents/MacOS/blackroija"
 rm -rf "./$APP"
 mv "./$STAGE/$APP" "./$APP"
 rm -rf "./$STAGE"

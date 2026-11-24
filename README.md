@@ -1,10 +1,10 @@
-# Session Status
+# blackroija
 
 A small floating Mac window that lists your open Claude Code sessions (the Code tab of the Claude desktop app), with the Hypefury repos first. It shows which sessions are working, which need you, and which are stuck, plus your open PRs. Work in one session at a time and jump to the next one from here.
 
 It only reads files on your Mac and GitHub. It never sends anything to a session or changes a PR.
 
-<img src="docs/overview.png" alt="The Session Status window: one stuck session, five that need you, three working and one waiting" width="446">
+<img src="docs/overview.png" alt="The blackroija window: one stuck session, five that need you, three working and one waiting" width="446">
 
 The screenshots here use made-up sessions and PRs.
 
@@ -43,33 +43,33 @@ Right-click the window for Refresh, the same "next session" action, and Quit.
 - Swift: install the Xcode command line tools with `xcode-select --install`.
 - The Claude desktop app, with sessions in the Code tab.
 - The GitHub CLI (`gh`), installed with Homebrew and logged in (`gh auth login`). It's used read-only, once a minute. Without it, the window still works but shows no PRs.
-- Optional: the `claude` command, logged in. It's used only when the desktop app hasn't saved a status for a session's latest reply. Haiku then reads that reply once to tell whether it waits on you, and the answer is cached in `~/Library/Application Support/SessionStatus/grades.json`.
+- Optional: the `claude` command, logged in. It's used only when the desktop app hasn't saved a status for a session's latest reply. Haiku then reads that reply once to tell whether it waits on you, and the answer is cached in `~/Library/Application Support/blackroija/grades.json`.
 
 ## Install
 
 ```bash
-git clone https://github.com/Hypefury/session-status.git ~/workspace/session-status
+git clone https://github.com/Hypefury/blackroija.git ~/workspace/blackroija
 ```
 
 ```bash
-cd ~/workspace/session-status && ./build.sh && open "Session Status.app"
+cd ~/workspace/blackroija && ./build.sh && open "blackroija.app"
 ```
 
 To have it open at login:
 
 ```bash
-cd ~/workspace/session-status && ./install-login-item.sh
+cd ~/workspace/blackroija && ./install-login-item.sh
 ```
 
 After changing the code, rebuild and restart it:
 
 ```bash
-cd ~/workspace/session-status && ./build.sh && pkill -x SessionStatus; sleep 1; open "Session Status.app"
+cd ~/workspace/blackroija && ./build.sh && pkill -x blackroija; sleep 1; open "blackroija.app"
 ```
 
 ## Setup for your own folders
 
-The window shows sessions from every folder. Sessions in these repos are grouped under their app's name, first; the rest are grouped under their repo's folder name. It finds the repo by its git folder, so worktrees count too. Edit `projects` at the top of `SessionStatus.swift` if your clones live elsewhere:
+The window shows sessions from every folder. Sessions in these repos are grouped under their app's name, first; the rest are grouped under their repo's folder name. It finds the repo by its git folder, so worktrees count too. Edit `projects` at the top of `blackroija.swift` if your clones live elsewhere:
 
 ```swift
 let projects: [String: String] = [
@@ -86,7 +86,7 @@ let projects: [String: String] = [
 `--print` prints the same sections, the PR groups and the order Control-Option-N follows, then exits:
 
 ```bash
-cd ~/workspace/session-status && "Session Status.app/Contents/MacOS/SessionStatus" --print
+cd ~/workspace/blackroija && "blackroija.app/Contents/MacOS/blackroija" --print
 ```
 
 ## How it works
