@@ -53,6 +53,20 @@ Right-click the window for Refresh and Quit.
 
 ## Install
 
+With Homebrew (it builds from source, so it needs the Xcode command line tools):
+
+```bash
+brew install hypefury/blackroija/blackroija
+```
+
+```bash
+brew services start hypefury/blackroija/blackroija
+```
+
+The second command starts it now and at every login. `brew upgrade` brings new versions.
+
+Or from a clone:
+
 ```bash
 git clone https://github.com/Hypefury/blackroija.git ~/workspace/blackroija
 ```
