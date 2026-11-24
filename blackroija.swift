@@ -1053,7 +1053,6 @@ struct Row: View {
         .contentShape(Rectangle())
         .padding(.vertical, 2).padding(.horizontal, 4)
         .onTapGesture { openSession(session.id) }
-        .help(session.need ?? "Open this session")
     }
 
     // All its open PRs; with none open, the first one and its state.

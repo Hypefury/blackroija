@@ -9,7 +9,7 @@ It only reads files on your Mac and GitHub. It never sends anything to a session
 The Claude desktop app's sidebar groups your sessions by project, so checking on all of them means moving from one project to the next, and it keeps every old session in view. blackroija puts all of it in one place:
 
 - **One list, sorted by what needs you.** Not by folder: stuck sessions come first, then the ones blocked on your answer, then the rest. You see in one glance where to go next.
-- **Everything you need on the row.** A red dot means blocked on you, and each row shows how long the session has been idle and its open PRs, with "(failing)" or "(conflicts)" right next to the number.
+- **Everything you need on the row.** The title, how long it's been idle and its open PRs.
 - **Always in sight.** It floats above your other windows, so you never switch to the Claude app just to check.
 - **Only what's recent.** Sessions idle for over a week are hidden and counted at the bottom, so the list stays short.
 - **Quiet.** No notifications, no badges. You look when you want to.
@@ -35,11 +35,9 @@ Sessions are sorted into sections, and grouped by repo (named after its folder) 
   <img src="docs/all-quiet.png" alt="Nothing needs you: four sessions working and three waiting on checks" width="400">
 </p>
 
-On the left, three stuck sessions come first, each with the reason. On the right, nothing needs you: every session is working or waiting on checks.
+Click a row to open the session, or click a PR number to open it on GitHub.
 
-Each row shows the title, how long it's been idle and all its open PRs. A PR marked "(failing)" has failing checks, and one marked "(conflicts)" has merge conflicts. Click a row to open the session, or click a PR number to open it on GitHub. Hover over a row to see what the session is asking for.
-
-At the bottom, **PRs** lists your own open PRs, plus teammates' PRs that an open session works on, grouped by repo. Each one shows a colored dot (red for failing checks, orange for conflicts, green for passing, gray for a draft, a stacked PR or pending checks), its number and its title. Click "PRs" to fold the list.
+At the bottom, **PRs** lists your own open PRs, plus teammates' PRs that an open session works on. Click "PRs" to fold the list.
 
 <img src="docs/prs.png" alt="The PR list, grouped by repo, with a colored dot and a note for each PR" width="486">
 
