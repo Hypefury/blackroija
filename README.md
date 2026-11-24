@@ -35,7 +35,7 @@ At the bottom, **PRs** lists your own open PRs, plus teammates' PRs that an open
 
 <img src="docs/needs-you.png" alt="Seven sessions that need you, red dots for the blocked ones, with the last one opened shaded" width="446">
 
-Right-click the window for Refresh, the same "next session" action, and Quit.
+Right-click the window for Refresh, Settings…, the same "next session" action, and Quit.
 
 ## Requirements
 
@@ -71,7 +71,7 @@ cd ~/workspace/blackroija && ./build.sh && pkill -x blackroija; sleep 1; open "b
 
 The window shows sessions from every folder, grouped by the folder name of their repo, in name order. It finds the repo by its git folder, so worktrees count too.
 
-The PR list covers every repo a session has an open PR on, plus the repos listed in `watchedRepos` in `blackroija.swift`, whose open PRs are shown even when no session works on them. Your GitHub login decides which PRs are "yours".
+The PR list covers every repo a session has an open PR on. To also see your own open PRs in repos where no session is working, right-click the window, choose **Settings…** and paste each repo's full GitHub address, like `https://github.com/owner/name`. The window checks with `gh` that you can see the repo, and the list is saved in `~/Library/Application Support/blackroija/settings.json`. Your GitHub login decides which PRs are "yours".
 
 ## Checking it from the terminal
 
