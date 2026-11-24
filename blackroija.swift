@@ -627,12 +627,14 @@ final class Store: ObservableObject {
             ? .none
             : gradeState(sessionId: file.sessionId, reply: transcript.reply, gradeIfNeeded: isRecent)
         // A background command still running: if the session said it is only
-        // waiting (on CI, a review), it stays under Waiting; otherwise the
-        // command is its work in progress (a test run), so it is working.
+        // waiting (on CI, a review), it stays under Waiting, and if its reply
+        // asks you something meanwhile (run a command, approve), it stays
+        // under Needs you; otherwise the command is its work in progress
+        // (a test run), so it is working.
         if transcript.commandRunning {
-            var onlyWaiting = false
-            if case .graded(let g) = grade { onlyWaiting = g.effort == .waiting }
-            if !onlyWaiting { activity = .working; grade = .none }
+            var staysIdle = false
+            if case .graded(let g) = grade { staysIdle = g.effort != .nothing }
+            if !staysIdle { activity = .working; grade = .none }
         }
         // A helper agent still working: the session wakes when it's done, so
         // it is working, unless its reply asks you something meanwhile.
