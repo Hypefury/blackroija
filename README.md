@@ -8,7 +8,7 @@ It only reads files on your Mac and GitHub. It never sends anything to a session
 
 The Claude desktop app's sidebar groups your sessions by project, so checking on all of them means moving from one project to the next, and it keeps every old session in view. blackroija puts all of it in one place:
 
-- **One list, sorted by what needs you.** Not by folder: stuck sessions come first, then the ones blocked on your answer, then the rest. You see in one glance where to go next.
+- **One list, sorted by what needs you.** Stuck sessions come first, then the ones waiting on you, then the ones still working. Inside each section they're grouped by repo, newest reply first. You see in one glance where to go next.
 - **Everything you need on the row.** The title, how long it's been idle and its open PRs.
 - **Always in sight.** It floats above your other windows, so you never switch to the Claude app just to check.
 - **Only what's recent.** Sessions idle for over a week are hidden and counted at the bottom, so the list stays short.
@@ -22,17 +22,17 @@ The screenshots here use made-up sessions and PRs.
 
 ## What you see
 
-Sessions are sorted into sections, and grouped by repo (named after its folder) inside each section:
+Sessions are sorted into sections. Inside each section they're grouped by repo (named after its folder), and the session with the newest reply comes first:
 
 - **Stuck** (orange): the session stopped mid-turn (for example after a connection error), or it's idle while one of its PRs has failing checks or conflicts. A short line says which.
-- **Needs you**: the session is idle and waiting on you. A red dot means it's blocked until you answer: a question card, a plan to approve, an "Allow / Deny" prompt, or something the session marked as blocking. These come first, oldest first. A session that says it's done stays here until you archive it.
+- **Needs you**: the session is idle and waiting on you. A red dot means it's blocked until you answer: a question card, a plan to approve, an "Allow / Deny" prompt, or something the session marked as blocking. A session that says it's done stays here until you archive it.
 - **Working** (green dot): Claude is mid-turn, or a helper agent or background job it started is still running.
 - **Waiting** (dimmed): idle, but only waiting on CI or another PR.
 - Sessions idle for over a week are only counted, at the bottom.
 
 <p>
-  <img src="docs/stuck.png" alt="Three stuck sessions on top, each with a line saying why" width="400">
-  <img src="docs/all-quiet.png" alt="Nothing needs you: four sessions working and three waiting on checks" width="400">
+  <img src="docs/stuck.png" alt="Three stuck sessions on top, each with a line saying why" width="400" align="top">
+  <img src="docs/all-quiet.png" alt="Nothing needs you: four sessions working and three waiting on checks" width="400" align="top">
 </p>
 
 Click a row to open the session, or click a PR number to open it on GitHub.
