@@ -99,3 +99,7 @@ cd ~/workspace/blackroija && "blackroija.app/Contents/MacOS/blackroija" --print
 - Opening a session uses the `claude://claude.ai/epitaxy/<session id>` link.
 
 These files belong to the Claude desktop app and aren't a public API, so an app update can break the window. When that happens, `--print` is the quickest way to see what it reads.
+
+## The name
+
+Named after the Kalmah song "Black Roija": [listen to it on YouTube](https://www.youtube.com/watch?v=70pW0ozwKBU).
