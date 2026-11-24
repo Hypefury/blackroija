@@ -69,6 +69,8 @@ The window shows sessions from every folder, grouped by the folder name of their
 
 The PR list covers every repo a session has an open PR on. To also see your own open PRs in repos where no session is working, right-click the window, choose **Settings…** and paste each repo's full GitHub address, like `https://github.com/owner/name`. The window checks with `gh` that you can see the repo, and the list is saved in `~/Library/Application Support/blackroija/settings.json`. Your GitHub login decides which PRs are "yours".
 
+<img src="docs/settings.png" alt="The settings window: a field for a GitHub address and the list of watched repos, each with a Remove button" width="520">
+
 ## Checking it from the terminal
 
 `--print` prints the same sections and the PR groups, then exits:
