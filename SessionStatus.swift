@@ -1391,7 +1391,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Stays on the desktop (Space) it was opened on; drag it to another
         // desktop in Mission Control to move it.
         panel.collectionBehavior = [.managed]
-        panel.isMovableByWindowBackground = true
+        // Only the title bar drags the window, so a drag inside the list
+        // can't move it by accident.
+        panel.isMovableByWindowBackground = false
 
         let blur = NSVisualEffectView()
         blur.material = .hudWindow
