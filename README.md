@@ -77,7 +77,7 @@ cd ~/workspace/blackroija && ./build.sh && pkill -x blackroija; sleep 1; open "b
 
 The window shows sessions from every folder, grouped by the folder name of their repo, in name order. It finds the repo by its git folder, so worktrees count too.
 
-The PR list covers every repo a session has an open PR on, with nothing to set up. Your GitHub login decides which PRs are "yours".
+The PR list covers the GitHub repo of every open session, with nothing to set up. The repo comes from the `origin` address in the folder's git settings (read-only), so a session counts before it has opened a PR, and repos that aren't on GitHub are skipped. Any other repo a session has an open PR on is covered too. Your GitHub login decides which PRs are "yours".
 
 ## Checking it from the terminal
 

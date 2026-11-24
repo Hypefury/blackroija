@@ -122,6 +122,8 @@ struct Session: Identifiable {
     var appStatus: AppStatus? = nil
     // Its turn stopped without finishing: why.
     var stopped: String? = nil
+    // The GitHub repo its folder's "origin" points at ("owner/name"), if any.
+    var repo: String? = nil
 }
 
 struct SessionPR: Hashable {
@@ -548,7 +550,8 @@ final class Store: ObservableObject {
             grade: grade,
             question: question,
             appStatus: appStatus,
-            stopped: question == nil ? transcript.stopped : nil
+            stopped: question == nil ? transcript.stopped : nil,
+            repo: sessionRepo(file)
         )
     }
 
@@ -672,6 +675,19 @@ final class Store: ObservableObject {
             return folderName(worktreeCommonDir(origin) ?? origin)
         }
         return "Other"
+    }
+
+    // The GitHub repo the session's folder points at, read from the "origin"
+    // address in the repo's git settings (a worktree shares its repo's).
+    private func sessionRepo(_ file: SessionFile) -> String? {
+        var gitDir = file.gitAnchors?.compactMap(\.commonDir).first
+        if gitDir == nil, let origin = file.originCwd {
+            gitDir = worktreeCommonDir(origin) ?? "\(origin)/.git"
+        }
+        guard let gitDir,
+              let config = try? String(contentsOfFile: "\(gitDir)/config", encoding: .utf8)
+        else { return nil }
+        return githubRepo(fromGitConfig: config)
     }
 
     // ".../blackroija/.git" -> "blackroija"
@@ -988,14 +1004,45 @@ struct Row: View {
     }
 }
 
-/// The repos to list PRs for: every repo a session has an open PR on. Each
-/// repo once, whatever its capitalization.
+/// The repos to list PRs for: the GitHub repo of every session's folder, plus
+/// every repo a session has an open PR on. Each repo once, whatever its
+/// capitalization.
 func prRepoList(_ sessions: [Session]) -> Set<String> {
     var byKey: [String: String] = [:]
-    for repo in sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
+    for repo in sessions.compactMap(\.repo) + sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
         if byKey[repo.lowercased()] == nil { byKey[repo.lowercased()] = repo }
     }
     return Set(byKey.values)
+}
+
+/// "owner/name" from the "origin" address in a git config file, or nil when
+/// there is none or it isn't on GitHub.
+func githubRepo(fromGitConfig config: String) -> String? {
+    var inOrigin = false
+    for raw in config.split(separator: "\n") {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("[") {
+            inOrigin = line.replacingOccurrences(of: " ", with: "") == #"[remote"origin"]"#
+            continue
+        }
+        guard inOrigin, let equals = line.firstIndex(of: "="),
+              line[..<equals].trimmingCharacters(in: .whitespaces) == "url"
+        else { continue }
+        return githubRepo(fromRemote: line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces))
+    }
+    return nil
+}
+
+/// "owner/name" from a GitHub address: https://github.com/owner/name(.git),
+/// git@github.com:owner/name.git or ssh://git@github.com/owner/name.git.
+func githubRepo(fromRemote address: String) -> String? {
+    let pattern = #"^(?:https?://(?:[^@/]+@)?|ssh://(?:[^@/]+@)?|git@)github\.com[:/]([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+?)(?:\.git)?/?$"#
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+          let found = regex.firstMatch(in: address, range: NSRange(address.startIndex..., in: address)),
+          let owner = Range(found.range(at: 1), in: address),
+          let name = Range(found.range(at: 2), in: address)
+    else { return nil }
+    return "\(address[owner])/\(address[name])"
 }
 
 /// The heading a repo's PRs go under: the repo's name.
