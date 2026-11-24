@@ -1341,6 +1341,7 @@ struct ContentView: View {
         .contextMenu {
             Button("Refresh") { store.reload() }
             Divider()
+            Text("Version \(appVersion)")
             Button("Quit blackroija") { NSApp.terminate(nil) }
         }
     }
