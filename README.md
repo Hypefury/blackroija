@@ -63,7 +63,7 @@ brew install hypefury/tap/blackroija
 brew services start hypefury/tap/blackroija
 ```
 
-The second command starts it now and at every login. `brew upgrade` brings new versions.
+The second command starts it now and at every login. When a new version is out, the bottom of the window shows a line with an Update button. It runs `brew upgrade` and restarts the app. This only exists in the Homebrew install.
 
 Or from a clone:
 

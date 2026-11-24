@@ -319,7 +319,131 @@ struct GradeError: LocalizedError {
 
 // MARK: - Store
 
+// MARK: - Updates (only for a copy Homebrew installed)
+
+// The tap's formula says which version `brew upgrade` can install, so the
+// window offers an update only when the upgrade will really find it.
+let tapFormulaAPI = "repos/Hypefury/homebrew-tap/contents/Formula/blackroija.rb"
+let tapFormulaName = "hypefury/tap/blackroija"
+let brewCandidates = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+let updateCheckSeconds: TimeInterval = 3600
+let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+// A copy built from a clone lives elsewhere and never offers an update.
+let installedByBrew = URL(fileURLWithPath: Bundle.main.bundlePath).resolvingSymlinksInPath()
+    .path.contains("/Cellar/blackroija/")
+
+enum UpdateState { case idle, running, failed }
+
+func isNewer(_ a: String, than b: String) -> Bool {
+    let x = a.split(separator: ".").map { Int($0) ?? 0 }, y = b.split(separator: ".").map { Int($0) ?? 0 }
+    for i in 0..<max(x.count, y.count) {
+        let p = i < x.count ? x[i] : 0, q = i < y.count ? y[i] : 0
+        if p != q { return p > q }
+    }
+    return false
+}
+
+/// "0.2.0" from the formula's `url ".../tags/v0.2.0.tar.gz"` line.
+func formulaVersion(_ text: String) -> String? {
+    for line in text.split(separator: "\n") {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix("url "), let start = t.range(of: "/tags/v"),
+              let end = t.range(of: ".tar.gz", range: start.upperBound..<t.endIndex) else { continue }
+        return String(t[start.upperBound..<end.lowerBound])
+    }
+    return nil
+}
+
+/// Runs a tool to the end with Homebrew's paths, output discarded. True on exit 0.
+func runTool(_ path: String, _ args: [String]) -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = args
+    var env = ProcessInfo.processInfo.environment
+    env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    env["HOMEBREW_NO_ENV_HINTS"] = "1"
+    process.environment = env
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do { try process.run() } catch { return false }
+    process.waitUntilExit()
+    return process.terminationStatus == 0
+}
+
 final class Store: ObservableObject {
+    // The version `brew upgrade` can install, when newer than this one.
+    @Published var newVersion: String?
+    @Published var updateState: UpdateState = .idle
+    private let updateQueue = DispatchQueue(label: "blackroija.update")
+    private var updateTimer: Timer?
+
+    private func startUpdateChecks() {
+        guard installedByBrew else { return }
+        checkUpdate()
+        updateTimer = Timer.scheduledTimer(withTimeInterval: updateCheckSeconds, repeats: true) { [weak self] _ in
+            self?.checkUpdate()
+        }
+    }
+
+    func checkUpdate() {
+        guard let gh = ghCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else { return }
+        updateQueue.async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: gh)
+            process.arguments = ["api", tapFormulaAPI, "--jq", ".content"]
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  let decoded = Data(base64Encoded: data, options: .ignoreUnknownCharacters),
+                  let latest = formulaVersion(String(decoding: decoded, as: UTF8.self)) else { return }
+            DispatchQueue.main.async {
+                self.newVersion = isNewer(latest, than: appVersion) ? latest : nil
+            }
+        }
+    }
+
+    /// Upgrades through Homebrew, then restarts into the new version.
+    func installUpdate() {
+        guard updateState != .running else { return }
+        guard let brew = brewCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            updateState = .failed
+            return
+        }
+        updateState = .running
+        updateQueue.async {
+            _ = runTool(brew, ["update", "--quiet"])
+            let upgraded = runTool(brew, ["upgrade", "--formula", tapFormulaName])
+            // `opt/blackroija` always points at the newest installed version.
+            let prefix = URL(fileURLWithPath: brew).deletingLastPathComponent().deletingLastPathComponent().path
+            let app = "\(prefix)/opt/blackroija/blackroija.app"
+            let installed = (NSDictionary(contentsOfFile: "\(app)/Contents/Info.plist")?["CFBundleShortVersionString"]) as? String
+            DispatchQueue.main.async {
+                guard upgraded, let installed, isNewer(installed, than: appVersion) else {
+                    self.updateState = .failed
+                    return
+                }
+                Self.restart(into: app)
+            }
+        }
+    }
+
+    private static func restart(into app: String) {
+        // Started by `brew services`: launchd brings the app back by itself.
+        if ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"]?.hasPrefix("homebrew.mxcl.") == true {
+            NSApp.terminate(nil)
+            return
+        }
+        let opener = Process()
+        opener.executableURL = URL(fileURLWithPath: "/bin/sh")
+        opener.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", app]
+        try? opener.run()
+        NSApp.terminate(nil)
+    }
+
     @Published var sessions: [Session] = []
     @Published var now = Date()
     @Published var error: String?
@@ -433,6 +557,7 @@ final class Store: ObservableObject {
     }
 
     func start() {
+        startUpdateChecks()
         startPRs()
         reload()
         timer = Timer.scheduledTimer(withTimeInterval: refreshSeconds, repeats: true) { [weak self] _ in
@@ -1154,19 +1279,25 @@ func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:])
 struct ContentView: View {
     @ObservedObject var store: Store
     @State private var showPRs = true
+    // Space above each section heading. The list has no top padding, so the
+    // first heading still sits 12 from the top.
+    private let sectionGap: CGFloat = 12
 
     var body: some View {
         let now = store.now
         let problems = prProblems(store.openPRs)
         let groups = arrange(store.sessions, now: now, problems: problems)
 
+        VStack(spacing: 0) {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
                 if let error = store.error {
                     Text("Couldn't read sessions: \(error)").font(.system(size: 12)).foregroundStyle(.red)
+                        .padding(.top, sectionGap)
                 }
                 if !groups.stuck.isEmpty {
                     Text("Stuck (\(groups.stuck.count))").font(.system(size: 12, weight: .bold)).foregroundStyle(.orange)
+                        .padding(.top, sectionGap)
                     ForEach(byApp(groups.stuck.map(\.session)), id: \.app) { group in
                         Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                             .padding(.leading, 4).padding(.top, 2)
@@ -1191,20 +1322,42 @@ struct ContentView: View {
                 }
                 if let open = store.openPRs {
                     mergeStrip(MergeQueue(open, sessions: store.sessions, now: now))
-                        .padding(.top, 8)
+                        .padding(.top, sectionGap)
                 }
                 if let prError = store.prError {
                     Text("Couldn't read PRs: \(prError)").font(.system(size: 12)).foregroundStyle(.red)
                 }
             }
-            .padding(12)
+            .padding([.horizontal, .bottom], 12)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        updateBar
         }
         .frame(minWidth: 240, minHeight: 120)
         .contextMenu {
             Button("Refresh") { store.reload() }
             Divider()
             Button("Quit blackroija") { NSApp.terminate(nil) }
+        }
+    }
+
+    // Pinned below the list so it's never scrolled out of sight.
+    @ViewBuilder
+    private var updateBar: some View {
+        if let version = store.newVersion {
+            Divider()
+            HStack(spacing: 8) {
+                Text(store.updateState == .running ? "Updating…"
+                     : store.updateState == .failed ? "Update failed"
+                     : "\(version) available")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                if store.updateState != .running {
+                    Button(store.updateState == .failed ? "Retry" : "Update") { store.installUpdate() }
+                        .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
         }
     }
 
@@ -1274,6 +1427,7 @@ struct ContentView: View {
         if !list.isEmpty {
             Text("\(name) (\(list.count))").font(.system(size: 12, weight: .bold))
                 .foregroundStyle(urgent ? AnyShapeStyle(Color.red) : AnyShapeStyle(.secondary))
+                .padding(.top, sectionGap)
             ForEach(byApp(list), id: \.app) { group in
                 Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                     .padding(.leading, 4).padding(.top, 2)
