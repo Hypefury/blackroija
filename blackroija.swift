@@ -374,10 +374,17 @@ func classify(_ transcript: TranscriptState, askAppStatus: () -> AppStatus?, nee
     // waiting (on CI, a review), it stays under Waiting, and if its reply
     // asks you something meanwhile (run a command, approve), it stays
     // under Needs you; otherwise the command is its work in progress
-    // (a test run), so it is working.
+    // (a test run), so it is working. A PR it offers for review while the
+    // command watches its checks or review bot isn't ready yet: the session
+    // wakes and may change it when the command ends, so it waits until then.
     if transcript.commandRunning {
         var staysIdle = false
-        if case .graded(let g) = grade { staysIdle = g.effort != .nothing }
+        if case .graded(let g) = grade {
+            staysIdle = g.effort != .nothing
+            if g.effort == .review {
+                grade = .graded(Grade(replyId: g.replyId, need: "Waiting for its background job", effort: .waiting))
+            }
+        }
         if !staysIdle { activity = .working; grade = .none }
     }
     // A helper agent still working: the session wakes when it's done, so
