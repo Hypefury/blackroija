@@ -362,6 +362,10 @@ func runTool(_ path: String, _ args: [String]) -> Bool {
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     env["HOMEBREW_NO_ENV_HINTS"] = "1"
+    // Only this upgrade: no cleanup of other packages, no removal of
+    // dependencies you no longer need. Your own brew settings aren't touched.
+    env["HOMEBREW_NO_INSTALL_CLEANUP"] = "1"
+    env["HOMEBREW_NO_AUTOREMOVE"] = "1"
     process.environment = env
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
