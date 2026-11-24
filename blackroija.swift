@@ -327,10 +327,21 @@ let tapFormulaAPI = "repos/Hypefury/homebrew-tap/contents/Formula/blackroija.rb"
 let tapFormulaName = "hypefury/tap/blackroija"
 let brewCandidates = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
 let updateCheckSeconds: TimeInterval = 3600
-let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+// Started as `blackroija` from the PATH, the running file is a symlink and
+// Bundle.main looks in the wrong folder, so find the .app from the real file.
+let appBundleURL: URL = {
+    var size: UInt32 = 0
+    _NSGetExecutablePath(nil, &size)
+    var buffer = [CChar](repeating: 0, count: Int(size))
+    _NSGetExecutablePath(&buffer, &size)
+    // ".../blackroija.app/Contents/MacOS/blackroija" -> ".../blackroija.app"
+    return URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath()
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+}()
+let appInfo = NSDictionary(contentsOfFile: appBundleURL.path + "/Contents/Info.plist")
+let appVersion = appInfo?["CFBundleShortVersionString"] as? String ?? "0"
 // A copy built from a clone lives elsewhere and never offers an update.
-let installedByBrew = URL(fileURLWithPath: Bundle.main.bundlePath).resolvingSymlinksInPath()
-    .path.contains("/Cellar/blackroija/")
+let installedByBrew = appBundleURL.path.contains("/Cellar/blackroija/")
 
 enum UpdateState { case idle, running, failed }
 
