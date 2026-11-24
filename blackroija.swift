@@ -26,7 +26,6 @@ let home = FileManager.default.homeDirectoryForCurrentUser.path
 let sessionsRoot = "\(home)/Library/Application Support/Claude/claude-code-sessions"
 let transcriptsRoot = "\(home)/.claude/projects"
 let gradesFile = "\(home)/Library/Application Support/blackroija/grades.json"
-let settingsFile = "\(home)/Library/Application Support/blackroija/settings.json"
 // The desktop app's log, and the one before it (it starts a new one at 10 MB).
 let appLog = "\(home)/Library/Logs/Claude/main.log"
 let appLogBefore = "\(home)/Library/Logs/Claude/main1.log"
@@ -88,34 +87,6 @@ struct Grade: Codable {
     let replyId: String
     let need: String
     let effort: Effort
-}
-
-/// What the settings window saves.
-struct Settings: Codable {
-    // Repos whose open PRs are listed even when no session works on them,
-    // as "owner/name".
-    var repos: [String]
-}
-
-/// "https://github.com/owner/name" -> "owner/name". Also accepts a ".git"
-/// ending, a trailing slash or a longer link (".../pull/12"); anything that
-/// isn't a github.com address over https gives nil.
-func parseRepoURL(_ text: String) -> String? {
-    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let url = URL(string: trimmed),
-          url.scheme?.lowercased() == "https",
-          url.host?.lowercased() == "github.com"
-    else { return nil }
-    let parts = url.pathComponents.filter { $0 != "/" }
-    guard parts.count >= 2 else { return nil }
-    let owner = parts[0]
-    var name = parts[1]
-    if name.hasSuffix(".git") { name = String(name.dropLast(4)) }
-    guard owner.range(of: #"^[A-Za-z0-9][A-Za-z0-9-]*$"#, options: .regularExpression) != nil,
-          name.range(of: #"^[A-Za-z0-9._-]+$"#, options: .regularExpression) != nil,
-          name != ".", name != ".."
-    else { return nil }
-    return "\(owner)/\(name)"
 }
 
 enum GradeState {
@@ -355,67 +326,14 @@ final class Store: ObservableObject {
     // False until the first scan finishes, so an empty list isn't shown as
     // "no sessions" while it's still loading.
     @Published var loaded = false
-    // Open PRs across the watched repos and the ones open sessions have PRs
-    // on, nil until the first fetch.
+    // Open PRs across the repos open sessions have PRs on, nil until the
+    // first fetch.
     @Published var openPRs: [OpenPR]?
     @Published var prError: String?
     private let prQueue = DispatchQueue(label: "blackroija.prs")
     private var prTimer: Timer?
     // The repos the last PR fetch covered; a new one triggers a fetch.
     private var prRepos: Set<String> = []
-    // Repos whose open PRs are listed even when no session works on them,
-    // as "owner/name"; edited in the settings window.
-    @Published var watchedRepos: [String] = []
-
-    func addRepo(_ repo: String) {
-        guard !watchedRepos.contains(where: { $0.caseInsensitiveCompare(repo) == .orderedSame }) else { return }
-        watchedRepos.append(repo)
-        saveSettings()
-        fetchPRs()
-    }
-
-    func removeRepo(_ repo: String) {
-        watchedRepos.removeAll { $0 == repo }
-        saveSettings()
-        fetchPRs()
-    }
-
-    private func saveSettings() {
-        let dir = (settingsFile as NSString).deletingLastPathComponent
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(Settings(repos: watchedRepos)) {
-            try? data.write(to: URL(fileURLWithPath: settingsFile), options: .atomic)
-        }
-    }
-
-    /// Asks GitHub (read-only, through `gh`) whether you can see the repo, and
-    /// for its exact name. Calls `done` on the main thread.
-    func lookUpRepo(_ repo: String, done: @escaping (Result<String, Error>) -> Void) {
-        prQueue.async {
-            let result = Result { () -> String in
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: try Self.ghPath())
-                process.arguments = ["repo", "view", repo, "--json", "nameWithOwner", "--jq", ".nameWithOwner"]
-                let out = Pipe()
-                process.standardOutput = out
-                process.standardError = FileHandle.nullDevice
-                try process.run()
-                let data = out.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                let name = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard process.terminationStatus == 0, !name.isEmpty else {
-                    throw NSError(domain: "blackroija", code: 3, userInfo: [
-                        NSLocalizedDescriptionKey: "GitHub (through gh) can't find \(repo). Check the spelling and that you can access it.",
-                    ])
-                }
-                return name
-            }
-            DispatchQueue.main.async { done(result) }
-        }
-    }
-
     private func startPRs() {
         fetchPRs()
         prTimer = Timer.scheduledTimer(withTimeInterval: prRefreshSeconds, repeats: true) { [weak self] _ in
@@ -424,11 +342,10 @@ final class Store: ObservableObject {
     }
 
     func fetchPRs() {
-        let list = prRepoList(sessions, watched: watchedRepos)
-        let watched = Set(watchedRepos.map { $0.lowercased() })
+        let list = prRepoList(sessions)
         prRepos = list
         prQueue.async {
-            let result = Result { try Self.loadOpenPRs(list, watched: watched) }
+            let result = Result { try Self.loadOpenPRs(list) }
             DispatchQueue.main.async {
                 switch result {
                 case .success(let prs): self.openPRs = prs; self.prError = nil
@@ -438,16 +355,10 @@ final class Store: ObservableObject {
         }
     }
 
-    static func ghPath() throws -> String {
+    static func loadOpenPRs(_ repoList: Set<String>) throws -> [OpenPR] {
         guard let gh = ghCandidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
             throw NSError(domain: "blackroija", code: 1, userInfo: [NSLocalizedDescriptionKey: "GitHub's gh tool not found"])
         }
-        return gh
-    }
-
-    /// `watched` holds the lowercased names of the repos you added in the settings.
-    static func loadOpenPRs(_ repoList: Set<String>, watched: Set<String>) throws -> [OpenPR] {
-        let gh = try ghPath()
         // Your GitHub login, to tell your PRs from teammates'.
         let whoami = Process()
         whoami.executableURL = URL(fileURLWithPath: gh)
@@ -460,6 +371,7 @@ final class Store: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         whoami.waitUntilExit()
         var all: [OpenPR] = []
+        var unreadable: [String] = []
         for repo in repoList.sorted() {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: gh)
@@ -472,10 +384,10 @@ final class Store: ObservableObject {
             let data = out.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
-                // A repo only a session mentions may be gone or private to
-                // someone else: skip it rather than lose the whole list.
-                if !watched.contains(repo.lowercased()) { continue }
-                throw NSError(domain: "blackroija", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(repo)"])
+                // A repo a session mentions may be gone or private to someone
+                // else: skip it rather than lose the whole list.
+                unreadable.append(repo)
+                continue
             }
             for var pr in try JSONDecoder().decode([OpenPR].self, from: data) {
                 let asked = "\(repo.lowercased())#\(pr.number)"
@@ -491,6 +403,11 @@ final class Store: ObservableObject {
                 pr.keys = [pr.key, asked]
                 all.append(pr)
             }
+        }
+        // Nothing could be read at all (not logged in to gh, offline): say so
+        // instead of showing an empty list.
+        if !repoList.isEmpty && unreadable.count == repoList.count {
+            throw NSError(domain: "blackroija", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(unreadable.sorted().joined(separator: ", "))"])
         }
         return all
     }
@@ -515,10 +432,6 @@ final class Store: ObservableObject {
            let saved = try? JSONDecoder().decode([String: Grade].self, from: data) {
             grades = saved
         }
-        if let data = FileManager.default.contents(atPath: settingsFile),
-           let saved = try? JSONDecoder().decode(Settings.self, from: data) {
-            watchedRepos = saved.repos
-        }
     }
 
     func start() {
@@ -538,7 +451,7 @@ final class Store: ObservableObject {
                 case .success(let list):
                     self.sessions = list
                     self.loaded = true
-                    if !prRepoList(list, watched: self.watchedRepos).isSubset(of: self.prRepos) { self.fetchPRs() }
+                    if !prRepoList(list).isSubset(of: self.prRepos) { self.fetchPRs() }
                     self.error = nil
                 case .failure(let err):
                     self.error = err.localizedDescription
@@ -1075,11 +988,11 @@ struct Row: View {
     }
 }
 
-/// The repos to list PRs for: the ones you added in the settings, plus any a
-/// session has an open PR on. Each repo once, whatever its capitalization.
-func prRepoList(_ sessions: [Session], watched: [String]) -> Set<String> {
+/// The repos to list PRs for: every repo a session has an open PR on. Each
+/// repo once, whatever its capitalization.
+func prRepoList(_ sessions: [Session]) -> Set<String> {
     var byKey: [String: String] = [:]
-    for repo in watched + sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
+    for repo in sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
         if byKey[repo.lowercased()] == nil { byKey[repo.lowercased()] = repo }
     }
     return Set(byKey.values)
@@ -1293,7 +1206,6 @@ struct ContentView: View {
         .frame(minWidth: 240, minHeight: 120)
         .contextMenu {
             Button("Refresh") { store.reload() }
-            Button("Settings…") { AppDelegate.current?.showSettings() }
             Divider()
             Button("Quit blackroija") { NSApp.terminate(nil) }
         }
@@ -1379,109 +1291,13 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Settings window
-
-/// The repos whose open PRs are listed even when no session works on them.
-struct SettingsView: View {
-    @ObservedObject var store: Store
-    @State private var text = ""
-    @State private var message: String?
-    @State private var checking = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Repos to watch").font(.headline)
-            Text("Your open PRs in these repos are listed even when no session works on them. Repos your sessions have PRs on are always listed.")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                TextField("https://github.com/owner/name", text: $text)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(add)
-                Button("Add", action: add)
-                    .disabled(checking || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            if let message {
-                Text(message).font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Divider()
-            if store.watchedRepos.isEmpty {
-                Text("No repos added yet.").foregroundStyle(.tertiary)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(store.watchedRepos, id: \.self) { repo in
-                            HStack {
-                                Text(repo).textSelection(.enabled)
-                                Spacer()
-                                Button("Remove") { store.removeRepo(repo) }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(16)
-        .frame(minWidth: 380, minHeight: 240)
-    }
-
-    private func add() {
-        guard let repo = parseRepoURL(text) else {
-            message = "Paste a full GitHub address, like https://github.com/owner/name"
-            return
-        }
-        if store.watchedRepos.contains(where: { $0.caseInsensitiveCompare(repo) == .orderedSame }) {
-            message = "\(repo) is already in the list."
-            return
-        }
-        checking = true
-        message = "Checking \(repo) on GitHub…"
-        store.lookUpRepo(repo) { result in
-            checking = false
-            switch result {
-            case .success(let exactName):
-                store.addRepo(exactName)
-                text = ""
-                message = nil
-            case .failure(let error):
-                message = error.localizedDescription
-            }
-        }
-    }
-}
-
 // MARK: - Window
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var panel: NSPanel!
-    private var settingsWindow: NSWindow?
-
-    func showSettings() {
-        if settingsWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 460, height: 340),
-                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false
-            )
-            window.title = "blackroija settings"
-            window.isReleasedWhenClosed = false
-            // Same level as the session window, so it can't hide behind it.
-            window.level = .floating
-            window.contentView = NSHostingView(rootView: SettingsView(store: store))
-            window.center()
-            settingsWindow = window
-        }
-        NSApp.activate()
-        settingsWindow?.makeKeyAndOrderFront(nil)
-    }
-
     let store = Store()
-    static weak var current: AppDelegate?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppDelegate.current = self
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 460),
             styleMask: [.titled, .resizable, .nonactivatingPanel, .utilityWindow, .fullSizeContentView],
@@ -1544,8 +1360,7 @@ enum BlackRoijaApp {
             let now = Date()
             let store = Store(gradeInBackground: false)
             let all = (try? store.scan()) ?? []
-            let open = try? Store.loadOpenPRs(prRepoList(all, watched: store.watchedRepos),
-                                              watched: Set(store.watchedRepos.map { $0.lowercased() }))
+            let open = try? Store.loadOpenPRs(prRepoList(all))
             let problems = prProblems(open)
             let groups = arrange(all, now: now, problems: problems)
             print("== STUCK")

@@ -19,7 +19,7 @@ A floating macOS window, written in Swift, that lists your Claude Code sessions 
 
 ## Rules
 
-- Read-only: never write to the desktop app's session files or conversation logs, and only read from GitHub through `gh`. The window's own cache and settings (the repos added in Settings…) are in `~/Library/Application Support/blackroija/`.
+- Read-only: never write to the desktop app's session files or conversation logs, and only read from GitHub through `gh`. The window's own cache is `~/Library/Application Support/blackroija/`.
 - The window is for focus, so keep it quiet. No labels or tags, no red or bold text for messages, no long text in rows, and no macOS notifications. Color goes on the dots and the PR status only. Before adding anything visible, ask whether it'll be read every time; if not, leave it out.
 - "Finished" means archived. An idle, unarchived session always waits on the user, even when it says it's done.
 - The PR list shows only the user's own PRs, plus teammates' PRs that an open session works on.
