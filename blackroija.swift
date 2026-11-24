@@ -85,7 +85,7 @@ enum Effort: String, Codable {
 
 // Bump when the triage instructions change, so saved answers made with the
 // old ones are asked again.
-let gradeInstructionsVersion = 3
+let gradeInstructionsVersion = 4
 
 struct Grade: Codable {
     let replyId: String
@@ -268,7 +268,10 @@ enum Grader {
         run this command") is not something they can do now, so it is still "waiting". \
         A PR or other work the agent says it finished is ready for the person, even while \
         its checks still run and even if it says it needs nothing: they still have to look \
-        at it and merge it, so it is "review" ("Review and merge PR 512"), never "waiting".
+        at it and merge it, so it is "review" ("Review and merge PR 512"), never "waiting". \
+        Unless the agent says it will merge it itself once its checks or tests pass \
+        ("After it merges, I'll do the same for the next one"): the person already said \
+        to merge, so it is "waiting".
         - "nothing": the agent reports work done and asks for nothing, and none of it is left \
         for the person to review or merge ("What I need from you: Nothing" after its PR merged). \
         An open PR it made is "review", even when the message says it needs nothing.
