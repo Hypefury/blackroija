@@ -56,11 +56,11 @@ Right-click the window for Refresh and Quit.
 With Homebrew (it builds from source, so it needs the Xcode command line tools):
 
 ```bash
-brew install hypefury/blackroija/blackroija
+brew install hypefury/tap/blackroija
 ```
 
 ```bash
-brew services start hypefury/blackroija/blackroija
+brew services start hypefury/tap/blackroija
 ```
 
 The second command starts it now and at every login. `brew upgrade` brings new versions.
