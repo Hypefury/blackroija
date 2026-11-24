@@ -49,7 +49,7 @@ Right-click the window for Refresh and Quit.
 - Swift: install the Xcode command line tools with `xcode-select --install`.
 - The Claude desktop app, with sessions in the Code tab.
 - The GitHub CLI (`gh`), installed with Homebrew and logged in (`gh auth login`). It's used read-only, once a minute. Without it, the window still works but shows no PRs.
-- Optional: the `claude` command, logged in. It's used only when the desktop app hasn't saved a status for a session's latest reply. Haiku then reads that reply once to tell whether it waits on you, and the answer is cached in `~/Library/Application Support/blackroija/grades.json`.
+- Optional: the `claude` command, logged in. The window uses it to ask Claude Haiku whether a session's latest reply waits on you or only on something else, like CI or another PR. It asks when the desktop app hasn't saved a status for that reply, or when the session still has a background command running. It sends the last 6,000 characters of the reply through your own login, so it counts toward your Claude usage. It asks once per reply and keeps the answer in `~/Library/Application Support/blackroija/grades.json`. When a new version changes how it asks, recent replies are asked again once.
 
 ## Install
 
