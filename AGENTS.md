@@ -23,5 +23,5 @@ A floating macOS window, written in Swift, that lists the Hypefury repos' Claude
 - The window is for focus, so keep it quiet. No labels or tags, no red or bold text for messages, no long text in rows (a row's message shows only on hover), and no macOS notifications. Color goes on the dots and the PR status only. Before adding anything visible, ask whether it'll be read every time; if not, leave it out.
 - "Finished" means archived. An idle, unarchived session always waits on the user, even when it says it's done.
 - The PR list shows only the user's own PRs, plus teammates' PRs that an open session works on.
-- Each requested change goes in its own commit. Push only when asked, to `master` with `git push origin HEAD:refs/heads/master`. The repo (`Hypefury/session-status`) is private and has no PR flow.
+- Each requested change goes in its own commit. Push only when asked, to `master` with `git push origin HEAD:refs/heads/master`. The repo (`Hypefury/session-status`) has no PR flow.
 - The desktop app's files and `claude://` links aren't a public API. When something stops showing up, read the real files before changing the parsing.

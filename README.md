@@ -35,7 +35,7 @@ Right-click the window for Refresh, the same "next session" action, and Quit.
 ## Install
 
 ```bash
-git clone git@github.com:Hypefury/session-status.git ~/workspace/session-status
+git clone https://github.com/Hypefury/session-status.git ~/workspace/session-status
 ```
 
 ```bash
