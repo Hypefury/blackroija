@@ -5,6 +5,8 @@ A floating macOS window, written in Swift, that lists your Claude Code sessions 
 ## Build, check, restart
 
 - Build with `./build.sh`. It compiles into a staging folder, so a failed build keeps the current app.
+- Run the tests once per feature, right before its work goes into `master` (a push to `master`, or merging a branch or PR into it), not after each commit. `tests/run.sh` checks which section sessions show in; it's free and takes seconds. Also run `tests/grade.sh` if the feature changed the instructions sent to Haiku or how it's called; it makes real Haiku calls (about $0.13 a run). Don't push while either fails: report the failure.
+- When you fix a session shown in the wrong place, add its case to `tests/SortingTests.swift` (or, for a Haiku answer, to `tests/grading-examples.json`) with made-up details, and check that it fails without the fix.
 - Restart the running window after each build:
   ```bash
   pkill -x blackroija; sleep 1; open "blackroija.app"
@@ -21,7 +23,7 @@ A floating macOS window, written in Swift, that lists your Claude Code sessions 
 - The repo is public, so nothing private goes in it. README screenshots and examples, the instructions sent to Haiku, and code comments use made-up sessions and PRs, never real session titles, repo names or PR numbers. Make screenshots from a scratch copy of the app pointed at a fake `home`.
 - Each requested change goes in its own commit. Push only when asked, to `master` with `git push origin HEAD:refs/heads/master`. The repo (`Hypefury/blackroija`) has no PR flow.
 - The desktop app's files and `claude://` links aren't a public API. When something stops showing up, read the real files before changing the parsing.
-- When you change the instructions sent to Haiku, test them on the real message that was sorted wrong. Run it through `claude -p` with the same flags the app uses, a few times, and also try a message that must still show under Needs you. Bump `gradeInstructionsVersion` so saved answers are asked again.
+- When you change the instructions sent to Haiku, also try the real message that was sorted wrong, a few times, without saving it in the repo. Bump `gradeInstructionsVersion` so saved answers are asked again.
 
 ## Releasing
 
