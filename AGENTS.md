@@ -14,7 +14,7 @@ A floating macOS window, written in Swift, that lists your Claude Code sessions 
   pkill -x blackroija; sleep 1; open "blackroija.app"
   ```
   Without the `sleep`, `open` sometimes fails with error -600. Run it again if it does.
-- You can't see the window or press its shortcut key. Say so in your report rather than implying you checked how it looks. Don't take full-screen screenshots to look for it: the window is often on another screen, and the capture records the user's mail and chats. Ask the user for a screenshot instead.
+- You can't see the window. Say so in your report rather than implying you checked how it looks. Don't take full-screen screenshots to look for it: the window is often on another screen, and the capture records the user's mail and chats. Ask the user for a screenshot instead.
 - To test a state the real sessions don't have (stuck, blocked), copy the app's source to a scratch folder, point `home` at a fake folder with made-up session files, and run `--print` there. Don't add test hooks to the app.
 
 ## Rules
