@@ -18,7 +18,6 @@
 // and the grade is kept on disk.
 
 import AppKit
-import Carbon
 import SwiftUI
 
 // MARK: - Settings
@@ -356,8 +355,6 @@ final class Store: ObservableObject {
     // False until the first scan finishes, so an empty list isn't shown as
     // "no sessions" while it's still loading.
     @Published var loaded = false
-    // The session the "next" shortcut opened last; the next press moves on.
-    @Published var lastOpened: String?
     // Open PRs across the watched repos and the ones open sessions have PRs
     // on, nil until the first fetch.
     @Published var openPRs: [OpenPR]?
@@ -496,19 +493,6 @@ final class Store: ObservableObject {
             }
         }
         return all
-    }
-
-    /// Opens the session after the last one opened, in the "next" order;
-    /// starts over at the top once past the end. Call on the main thread.
-    func openNext() {
-        let queue = nextQueue(sessions, now: Date(), problems: prProblems(openPRs))
-        guard !queue.isEmpty else { NSSound.beep(); return }
-        var index = 0
-        if let last = lastOpened, let at = queue.firstIndex(where: { $0.id == last }) {
-            index = (at + 1) % queue.count
-        }
-        lastOpened = queue[index].id
-        openSession(queue[index].id)
     }
 
     // Everything below is touched only on `work`.
@@ -1032,8 +1016,6 @@ struct Row: View {
     let session: Session
     let now: Date
     let dimmed: Bool
-    // The session the "next" shortcut opened last, shaded.
-    var current = false
     // Open-PR problems, to mark its PR numbers.
     var problems: [String: String] = [:]
     // Why it is stuck, shown in its own line.
@@ -1070,7 +1052,6 @@ struct Row: View {
         .opacity(dimmed ? 0.6 : 1)
         .contentShape(Rectangle())
         .padding(.vertical, 2).padding(.horizontal, 4)
-        .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(current ? 0.08 : 0)))
         .onTapGesture { openSession(session.id) }
         .help(session.need ?? "Open this session")
     }
@@ -1154,21 +1135,6 @@ func stuckReason(_ session: Session, problems: [String: String]) -> String? {
     }
     guard !failing.isEmpty else { return nil }
     return failing.map { "Checks failing on PR \($0)" }.joined(separator: "; ")
-}
-
-/// The order the "next" shortcut walks through: sessions blocked on you
-/// (longest-stuck first), then the rest that need you, where anything idle
-/// for over two hours goes first so it doesn't sink.
-func nextQueue(_ sessions: [Session], now: Date, problems: [String: String] = [:]) -> [Session] {
-    let groups = arrange(sessions, now: now, problems: problems)
-    // The window lists newest first; this walk keeps its own order.
-    let stuck = groups.stuck.map(\.session).sorted { $0.lastActivity < $1.lastActivity }
-    let answer = groups.answer.sorted { $0.lastActivity < $1.lastActivity }
-    let old = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) > 2 * 3600 }
-        .sorted { $0.lastActivity < $1.lastActivity }
-    let rest = groups.needsYou.filter { now.timeIntervalSince($0.lastActivity) <= 2 * 3600 }
-        .sorted { $0.grade.rank != $1.grade.rank ? $0.grade.rank < $1.grade.rank : $0.lastActivity > $1.lastActivity }
-    return stuck + answer + old + rest
 }
 
 func openSession(_ id: String) {
@@ -1287,8 +1253,6 @@ struct ContentView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text("⌃⌥N opens the next session that needs you")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
                 if let error = store.error {
                     Text("Couldn't read sessions: \(error)").font(.system(size: 12)).foregroundStyle(.red)
                 }
@@ -1298,7 +1262,7 @@ struct ContentView: View {
                         Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                             .padding(.leading, 4).padding(.top, 2)
                         ForEach(group.sessions) { s in
-                            Row(session: s, now: now, dimmed: false, current: s.id == store.lastOpened,
+                            Row(session: s, now: now, dimmed: false,
                                 problems: problems, stuck: groups.stuck.first { $0.session.id == s.id }?.reason)
                         }
                         .padding(.leading, 12)
@@ -1329,7 +1293,6 @@ struct ContentView: View {
         }
         .frame(minWidth: 240, minHeight: 120)
         .contextMenu {
-            Button("Open next session (⌃⌥N)") { store.openNext() }
             Button("Refresh") { store.reload() }
             Button("Settings…") { AppDelegate.current?.showSettings() }
             Divider()
@@ -1409,7 +1372,7 @@ struct ContentView: View {
                 Text(group.app).font(.system(size: 11, weight: .semibold)).foregroundStyle(.tertiary)
                     .padding(.leading, 4).padding(.top, 2)
                 ForEach(group.sessions) {
-                    Row(session: $0, now: now, dimmed: dimmed, current: $0.id == store.lastOpened, problems: problems)
+                    Row(session: $0, now: now, dimmed: dimmed, problems: problems)
                 }
                     .padding(.leading, 12)
             }
@@ -1517,24 +1480,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     let store = Store()
     static weak var current: AppDelegate?
-    private var hotKey: EventHotKeyRef?
-
-    /// Control-Option-N from any app opens the next session that needs you.
-    /// A Carbon hot key needs no accessibility permission.
-    private func registerNextKey() {
-        AppDelegate.current = self
-        var pressed = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-            DispatchQueue.main.async { AppDelegate.current?.store.openNext() }
-            return noErr
-        }, 1, &pressed, nil, nil)
-        let id = EventHotKeyID(signature: OSType(0x5353_4e58), id: 1) // "SSNX"
-        let status = RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(controlKey | optionKey), id,
-                                         GetApplicationEventTarget(), 0, &hotKey)
-        NSLog("blackroija: next-session key registered with status %d", status)
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.current = self
         panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 320, height: 460),
             styleMask: [.titled, .resizable, .nonactivatingPanel, .utilityWindow, .fullSizeContentView],
@@ -1574,7 +1522,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         panel.setFrameAutosaveName("BlackRoijaPanel")
         panel.orderFrontRegardless()
-        registerNextKey()
         store.start()
     }
 
@@ -1624,8 +1571,6 @@ enum BlackRoijaApp {
                 }
             }
             for s in all where s.prs.count > 1 { print("  \(s.title): PRs " + s.prs.map { "\($0.number) \($0.state)" }.joined(separator: ", ")) }
-            print("== NEXT KEY ORDER")
-            for (i, s) in nextQueue(all, now: now, problems: problems).enumerated() { print("  \(i + 1). \(s.title)") }
             return
         }
         let app = NSApplication.shared

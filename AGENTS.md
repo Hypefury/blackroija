@@ -5,7 +5,7 @@ A floating macOS window, written in Swift, that lists your Claude Code sessions 
 ## Build, check, restart
 
 - Build with `./build.sh`. It compiles into a staging folder, so a failed build keeps the current app.
-- Check a change with `--print` before restarting. It prints every section, the PR groups and the Control-Option-N order from your real sessions, then exits:
+- Check a change with `--print` before restarting. It prints every section and the PR groups from your real sessions, then exits:
   ```bash
   "blackroija.app/Contents/MacOS/blackroija" --print
   ```

@@ -31,11 +31,7 @@ At the bottom, **PRs** lists your own open PRs, plus teammates' PRs that an open
 
 <img src="docs/prs.png" alt="The PR list, grouped by repo, with a colored dot and a note for each PR" width="486">
 
-**Control-Option-N**, from any app, opens the next session that needs you: stuck sessions first, then blocked ones, then the rest. Press it again to move on. The last session it opened is shaded in the window.
-
-<img src="docs/needs-you.png" alt="Seven sessions that need you, red dots for the blocked ones, with the last one opened shaded" width="446">
-
-Right-click the window for Refresh, Settings…, the same "next session" action, and Quit.
+Right-click the window for Refresh, Settings… and Quit.
 
 ## Requirements
 
@@ -75,7 +71,7 @@ The PR list covers every repo a session has an open PR on. To also see your own 
 
 ## Checking it from the terminal
 
-`--print` prints the same sections, the PR groups and the order Control-Option-N follows, then exits:
+`--print` prints the same sections and the PR groups, then exits:
 
 ```bash
 cd ~/workspace/blackroija && "blackroija.app/Contents/MacOS/blackroija" --print
