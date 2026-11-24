@@ -85,7 +85,7 @@ enum Effort: String, Codable {
 
 // Bump when the triage instructions change, so saved answers made with the
 // old ones are asked again.
-let gradeInstructionsVersion = 2
+let gradeInstructionsVersion = 3
 
 struct Grade: Codable {
     let replyId: String
@@ -258,12 +258,18 @@ enum Grader {
         - "review": look at screenshots, a diff, a draft or a document before answering
         - "handsOn": test it themselves, run a command, sign in, change a setting, \
         or do anything outside the chat
-        - "waiting": the agent asks nothing of the person and is only waiting on something \
-        outside them: CI checks, a review bot, its own background job, another PR merging \
-        first, or a set time. If it waits on the person in any way, it is not "waiting". \
+        - "waiting": nothing is ready for the person yet. The agent is in the middle of its \
+        work and only waits on something outside them before it can go on: CI checks, \
+        a review bot, its own background job, another PR merging first, or a set time. \
+        If it waits on the person in any way, it is not "waiting". \
         An ask the person can only act on after that wait ends ("when the checks are green, \
-        run this command") is not something they can do now, so it is still "waiting".
-        - "nothing": the agent reports work done and asks for nothing ("What I need from you: Nothing")
+        run this command") is not something they can do now, so it is still "waiting". \
+        A PR or other work the agent says it finished is ready for the person, even while \
+        its checks still run and even if it says it needs nothing: they still have to look \
+        at it and merge it, so it is "review" ("Review and merge PR 512"), never "waiting".
+        - "nothing": the agent reports work done and asks for nothing, and none of it is left \
+        for the person to review or merge ("What I need from you: Nothing" after its PR merged). \
+        An open PR it made is "review", even when the message says it needs nothing.
 
         <message>
         \(text)
