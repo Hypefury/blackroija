@@ -11,7 +11,7 @@ It only reads files on your Mac and GitHub. It never sends anything to a session
 Sessions are sorted into sections, and grouped by app (Web app, Mobile, Website) inside each section:
 
 - **Stuck** (orange): the session stopped mid-turn (for example after a connection error), or it's idle while one of its PRs has failing checks or conflicts. A short line says which.
-- **Needs you**: the session is idle and waiting on you. A red dot means it's blocked until you answer: a question card, a plan to approve, or something the session marked as blocking. These come first, oldest first. A session that says it's done stays here until you archive it.
+- **Needs you**: the session is idle and waiting on you. A red dot means it's blocked until you answer: a question card, a plan to approve, an "Allow / Deny" prompt, or something the session marked as blocking. These come first, oldest first. A session that says it's done stays here until you archive it.
 - **Working** (green dot): Claude is mid-turn, or a helper agent or background job it started is still running.
 - **Waiting** (dimmed): idle, but only waiting on CI or another PR.
 - Sessions idle for over a week are only counted, at the bottom.
@@ -80,6 +80,7 @@ cd ~/workspace/session-status && "Session Status.app/Contents/MacOS/SessionStatu
 
 - Sessions: `~/Library/Application Support/Claude/claude-code-sessions/*/*/local_*.json`, one file per session. Each one holds the title, folder, PRs, last activity, whether it's archived, and the status the app saves after each turn. Archived sessions are skipped.
 - Conversation logs: `~/.claude/projects/*/<session>.jsonl`. They tell whether Claude is mid-turn, whether a question card or plan is unanswered, whether background work is still running, and whether the turn ended on an error.
+- The desktop app's log: `~/Library/Logs/Claude/main.log`. It tells which "Allow / Deny" prompts are still unanswered, including ones a helper agent raised.
 - Everything refreshes every 5 seconds, and PRs every 60 seconds.
 - The window floats above other windows, stays on the desktop you put it on, and keeps running when closed. Quit it from the right-click menu.
 - Opening a session uses the `claude://claude.ai/epitaxy/<session id>` link.

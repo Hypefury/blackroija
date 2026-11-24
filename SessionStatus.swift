@@ -8,6 +8,8 @@
 //   ~/.claude/projects/*/<cliSessionId>.jsonl
 //     the conversation log; its last message says whether Claude is mid-turn,
 //     and Claude's last reply says what it needs from you
+//   ~/Library/Logs/Claude/main.log
+//     the app's own log; it says which "Allow / Deny" prompts are unanswered
 //
 // What an idle session needs comes from the status the desktop app saves after
 // each turn (blocked / ready for review / finished, plus what you must do).
@@ -25,6 +27,9 @@ let home = FileManager.default.homeDirectoryForCurrentUser.path
 let sessionsRoot = "\(home)/Library/Application Support/Claude/claude-code-sessions"
 let transcriptsRoot = "\(home)/.claude/projects"
 let gradesFile = "\(home)/Library/Application Support/SessionStatus/grades.json"
+// The desktop app's log, and the one before it (it starts a new one at 10 MB).
+let appLog = "\(home)/Library/Logs/Claude/main.log"
+let appLogBefore = "\(home)/Library/Logs/Claude/main1.log"
 
 // Repo git folder -> label shown in the window. Sessions in any other
 // folder are listed too, under their repo's folder name.
@@ -435,6 +440,10 @@ final class Store: ObservableObject {
     private var failures: [String: (replyId: String, at: Date, reason: String)] = [:]
     private var timer: Timer?
     private let gradeInBackground: Bool
+    // "Allow / Deny" prompts the app showed and nobody answered yet, by
+    // request, and how far into the app's log that was read from.
+    private var prompts: [String: (session: String, tool: String)] = [:]
+    private var appLogOffset: UInt64?
 
     init(gradeInBackground: Bool = true) {
         self.gradeInBackground = gradeInBackground
@@ -474,6 +483,7 @@ final class Store: ObservableObject {
     func scan() throws -> [Session] {
         let fm = FileManager.default
         var found: [Session] = []
+        readAppLog()
         for account in try fm.contentsOfDirectory(atPath: sessionsRoot) {
             let accountDir = "\(sessionsRoot)/\(account)"
             guard let orgs = try? fm.contentsOfDirectory(atPath: accountDir) else { continue }
@@ -536,6 +546,13 @@ final class Store: ObservableObject {
             }
             if !asksYou { activity = .working; grade = .none; appStatus = nil }
         }
+        // An "Allow / Deny" prompt nobody answered: whatever it or its helper
+        // agent was doing, it does nothing more until you click.
+        var question = transcript.question
+        if question == nil, let tool = prompts.values.first(where: { $0.session == file.sessionId })?.tool {
+            question = "Allow or deny: \(tool)"
+            activity = .idle; grade = .none; appStatus = nil
+        }
         let prs: [SessionPR] = (file.prs ?? []).compactMap { pr in
             guard let number = pr.prNumber, let repo = pr.repo ?? repos[project] else { return nil }
             return SessionPR(number: number, repo: repo, state: pr.state ?? "OPEN")
@@ -548,10 +565,50 @@ final class Store: ObservableObject {
             lastActivity: last,
             prs: prs,
             grade: grade,
-            question: transcript.question,
+            question: question,
             appStatus: appStatus,
-            stopped: transcript.stopped
+            stopped: question == nil ? transcript.stopped : nil
         )
+    }
+
+    // The app's log has a line when it shows an "Allow / Deny" prompt and one
+    // when you answer it. Stopping a session, or starting it again, drops its
+    // prompts without an answer. Only the part added since the last read is
+    // read; the first read also covers the log before this one.
+    private func readAppLog() {
+        var text = ""
+        if appLogOffset == nil, let before = FileManager.default.contents(atPath: appLogBefore) {
+            text = String(decoding: before, as: UTF8.self)
+        }
+        guard let handle = FileHandle(forReadingAtPath: appLog) else { return }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        // Smaller than what was read: the app started a new log.
+        var offset = appLogOffset ?? 0
+        if size < offset { offset = 0 }
+        try? handle.seek(toOffset: offset)
+        var data = (try? handle.readToEnd()) ?? Data()
+        // A line still being written is left for the next read.
+        if let end = data.lastIndex(of: UInt8(ascii: "\n")) {
+            data = data.prefix(through: end)
+        } else {
+            data = Data()
+        }
+        appLogOffset = offset + UInt64(data.count)
+        text += String(decoding: data, as: UTF8.self)
+
+        for line in text.split(separator: "\n") {
+            if line.contains("Emitted tool permission request") {
+                let found = matches(#"request ([0-9a-f-]+) for (\S+) in session (local_[0-9a-f-]+)"#, groups: 3, in: line)
+                if found.count == 3 { prompts[found[0]] = (found[2], found[1]) }
+            } else if line.contains("Received permission response for") {
+                if let id = matches(#"response for ([0-9a-f-]+)"#, in: line).first { prompts[id] = nil }
+            } else if line.contains("LocalSessions.interrupt:") || line.contains("Starting local session") {
+                if let session = matches(#"(local_[0-9a-f-]+)"#, in: line).first {
+                    prompts = prompts.filter { $0.value.session != session }
+                }
+            }
+        }
     }
 
     private func currentAppStatus(_ file: SessionFile, replyId: String?) -> AppStatus? {
@@ -752,10 +809,16 @@ final class Store: ObservableObject {
         return nil
     }
 
-    private func matches(_ pattern: String, in line: Substring) -> [String] {
+    // The first group of every match; with `groups`, each group of the first match.
+    private func matches(_ pattern: String, groups: Int = 1, in line: Substring) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let text = String(line)
-        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+        let found = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        if groups > 1 {
+            guard let first = found.first else { return [] }
+            return (1...groups).compactMap { Range(first.range(at: $0), in: text).map { String(text[$0]) } }
+        }
+        return found.compactMap {
             Range($0.range(at: 1), in: text).map { String(text[$0]) }
         }
     }
