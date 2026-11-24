@@ -21,3 +21,10 @@ A floating macOS window, written in Swift, that lists your Claude Code sessions 
 - The repo is public, so nothing private goes in it. README screenshots and examples use made-up sessions and PRs, never real session titles, repo names or PR numbers. Make them from a scratch copy of the app pointed at a fake `home`.
 - Each requested change goes in its own commit. Push only when asked, to `master` with `git push origin HEAD:refs/heads/master`. The repo (`Hypefury/blackroija`) has no PR flow.
 - The desktop app's files and `claude://` links aren't a public API. When something stops showing up, read the real files before changing the parsing.
+
+## Releasing
+
+- A release is a `vX.Y.Z` tag on `master`. Pushing it is all it takes: the Homebrew tap (`Hypefury/homebrew-tap`) follows the newest tag within the hour, and the app's Update button offers it to Homebrew installs.
+- When your work is done and on `master` (or ready to go there), suggest a release and say which kind. A patch, the `z` in `x.y.z` (`0.2.2` to `0.2.3`), is for fixes and changes nobody sees. A minor, the `y` (`0.2.2` to `0.3.0`), is for something new the user sees or does. Say why in one sentence. Leave the `x` alone unless the user asks.
+- Only tag when asked. Tag the commit that's on `origin/master`, push with `git push origin refs/tags/vX.Y.Z`, and check the tap's formula points at the new tag afterwards.
+- `./build.sh` takes the version from the `VERSION` environment variable (default `0.1`), so a build from a clone only shows the right number if you set it.
