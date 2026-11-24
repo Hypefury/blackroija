@@ -420,14 +420,12 @@ final class Store: ObservableObject {
     private var grading: Set<String> = []
     private var failures: [String: (replyId: String, at: Date, reason: String)] = [:]
     private var timer: Timer?
-    private let gradeInBackground: Bool
     // "Allow / Deny" prompts the app showed and nobody answered yet, by
     // request, and how far into the app's log that was read from.
     private var prompts: [String: (session: String, tool: String)] = [:]
     private var appLogOffset: UInt64?
 
-    init(gradeInBackground: Bool = true) {
-        self.gradeInBackground = gradeInBackground
+    init() {
         if let data = FileManager.default.contents(atPath: gradesFile),
            let saved = try? JSONDecoder().decode([String: Grade].self, from: data) {
             grades = saved
@@ -616,10 +614,6 @@ final class Store: ObservableObject {
         }
         guard gradeIfNeeded else { return .none }
 
-        if !gradeInBackground {
-            apply(sessionId: sessionId, reply: reply, result: Grader.grade(reply))
-            return gradeState(sessionId: sessionId, reply: reply, gradeIfNeeded: false)
-        }
         grading.insert(sessionId)
         gradeQueue.async {
             let result = Grader.grade(reply)
@@ -1355,39 +1349,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 enum BlackRoijaApp {
     static func main() {
-        // `--print` grades what needs grading (waiting for each), lists what
-        // the window would show, then exits.
-        if CommandLine.arguments.contains("--print") {
-            let now = Date()
-            let store = Store(gradeInBackground: false)
-            let all = (try? store.scan()) ?? []
-            let open = try? Store.loadOpenPRs(prRepoList(all, now: now))
-            let problems = prProblems(open)
-            let groups = arrange(all, now: now, problems: problems)
-            print("== STUCK")
-            for (s, reason) in groups.stuck { print("    \(s.title) [\(s.project)]\n      -> \(reason)") }
-            for (name, list) in [("WAITING FOR YOUR ANSWER", groups.answer), ("NEEDS YOU", groups.needsYou), ("WORKING", groups.working), ("WAITING", groups.quiet)] {
-                print("== \(name)")
-                for group in byApp(list) {
-                    print("  \(group.app)")
-                    for s in group.sessions {
-                        let state = s.activity == .working ? "working" : "idle \(age(s.lastActivity, now: now))"
-                        print("    \(s.title) (\(state))")
-                        if let need = s.need { print("      -> \(need)") }
-                    }
-                }
-            }
-            print("\(groups.stale) more idle for over a week")
-            if let open {
-                let queue = MergeQueue(open, sessions: all, now: now)
-                for (name, list) in [("PRS SHOWN", queue.shown), ("CHECKS PASSING", queue.ready), ("CHECKS FAILING", queue.failing),
-                                     ("CONFLICTS", queue.conflicts)] {
-                    print("== \(name): " + list.map { "\($0.repo.split(separator: "/").last ?? "")#\($0.number)" }.joined(separator: ", "))
-                }
-            }
-            for s in all where s.prs.count > 1 { print("  \(s.title): PRs " + s.prs.map { "\($0.number) \($0.state)" }.joined(separator: ", ")) }
-            return
-        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate

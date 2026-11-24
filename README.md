@@ -93,14 +93,6 @@ The window shows sessions from every folder, grouped by the folder name of their
 
 The PR list shows the open PRs that the sessions in the list work on: sessions that are working, or were active within the last week. When a session goes quiet for over a week, its PRs drop out with it, and a PR no session works on isn't listed. Nothing to set up. A PR opened by someone else is marked with their GitHub name.
 
-## Checking it from the terminal
-
-`--print` prints the same sections and the PR groups, then exits:
-
-```bash
-cd ~/workspace/blackroija && "blackroija.app/Contents/MacOS/blackroija" --print
-```
-
 ## How it works
 
 - Sessions: `~/Library/Application Support/Claude/claude-code-sessions/*/*/local_*.json`, one file per session. Each one holds the title, folder, PRs, last activity, whether it's archived, and the status the app saves after each turn. Archived sessions are skipped.
@@ -110,7 +102,7 @@ cd ~/workspace/blackroija && "blackroija.app/Contents/MacOS/blackroija" --print
 - The window floats above other windows, stays on the desktop you put it on, and keeps running when closed. Quit it from the right-click menu.
 - Opening a session uses the `claude://claude.ai/epitaxy/<session id>` link.
 
-These files belong to the Claude desktop app and aren't a public API, so an app update can break the window. When that happens, `--print` is the quickest way to see what it reads.
+These files belong to the Claude desktop app and aren't a public API, so an app update can break the window.
 
 ## The name
 
