@@ -1076,7 +1076,8 @@ extension SessionPR {
 }
 
 /// Why a session is stuck, or nil: its turn stopped without finishing, or
-/// it sits idle, asking nothing, while one of its PRs fails or conflicts.
+/// it sits idle, asking nothing, while one of its PRs fails its checks.
+/// Merge conflicts don't count: rebasing late is a choice, not a block.
 func stuckReason(_ session: Session, problems: [String: String]) -> String? {
     if let stopped = session.stopped { return stopped }
     guard session.activity == .idle, !session.blockedOnYou else { return nil }
@@ -1088,10 +1089,11 @@ func stuckReason(_ session: Session, problems: [String: String]) -> String? {
     case .grading: return nil
     default: break
     }
-    let broken = session.prs.filter(\.isOpen).compactMap { pr in problems[pr.key].map { (pr.number, $0) } }
-    guard !broken.isEmpty else { return nil }
-    return broken.map { $1 == "conflicts" ? "PR \($0) has conflicts" : "Checks failing on PR \($0)" }
-        .joined(separator: "; ")
+    let failing = session.prs.filter(\.isOpen).compactMap { pr in
+        problems[pr.key].flatMap { $0 == "conflicts" ? nil : pr.number }
+    }
+    guard !failing.isEmpty else { return nil }
+    return failing.map { "Checks failing on PR \($0)" }.joined(separator: "; ")
 }
 
 /// The order the "next" shortcut walks through: sessions blocked on you
