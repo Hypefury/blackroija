@@ -1280,8 +1280,8 @@ struct ContentView: View {
     @ObservedObject var store: Store
     @State private var showPRs = true
     // Space above each section heading. The list has no top padding, so the
-    // first heading still sits 12 from the top.
-    private let sectionGap: CGFloat = 12
+    // first heading still sits 22 from the top.
+    private let sectionGap: CGFloat = 22
 
     var body: some View {
         let now = store.now
