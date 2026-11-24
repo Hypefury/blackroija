@@ -83,10 +83,15 @@ enum Effort: String, Codable {
     var needsYou: Bool { self != .waiting }
 }
 
+// Bump when the triage instructions change, so saved answers made with the
+// old ones are asked again.
+let gradeInstructionsVersion = 2
+
 struct Grade: Codable {
     let replyId: String
     let need: String
     let effort: Effort
+    var version: Int? = gradeInstructionsVersion
 }
 
 enum GradeState {
@@ -255,7 +260,9 @@ enum Grader {
         or do anything outside the chat
         - "waiting": the agent asks nothing of the person and is only waiting on something \
         outside them: CI checks, a review bot, its own background job, another PR merging \
-        first, or a set time. If it waits on the person in any way, it is not "waiting".
+        first, or a set time. If it waits on the person in any way, it is not "waiting". \
+        An ask the person can only act on after that wait ends ("when the checks are green, \
+        run this command") is not something they can do now, so it is still "waiting".
         - "nothing": the agent reports work done and asks for nothing ("What I need from you: Nothing")
 
         <message>
@@ -749,7 +756,8 @@ final class Store: ObservableObject {
 
     private func gradeState(sessionId: String, reply: LastReply?, gradeIfNeeded: Bool) -> GradeState {
         guard let reply else { return .none }
-        if let grade = grades[sessionId], grade.replyId == reply.id { return .graded(grade) }
+        if let grade = grades[sessionId], grade.replyId == reply.id,
+           grade.version == gradeInstructionsVersion { return .graded(grade) }
         if grading.contains(sessionId) { return .grading }
         if let failure = failures[sessionId], failure.replyId == reply.id,
            Date().timeIntervalSince(failure.at) < retryFailedAfter {
