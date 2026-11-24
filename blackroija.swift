@@ -333,6 +333,63 @@ struct GradeError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+// MARK: - Where a session stands
+
+/// Where a session stands, from what its log and the app say. The app's
+/// status and Haiku's grade are only asked for when they matter (asking for
+/// a grade can start a Haiku call). `prompt` is the tool named by an
+/// "Allow / Deny" prompt nobody answered.
+func classify(_ transcript: TranscriptState, askAppStatus: () -> AppStatus?, needsAction: String?,
+              askGrade: () -> GradeState, prompt: String?)
+    -> (activity: Activity, grade: GradeState, appStatus: AppStatus?, question: String?) {
+    var activity = transcript.activity
+    // The app's status, when it describes the reply the log ends on.
+    // Skipped while a background command runs: the status doesn't say
+    // whether the session is only waiting on CI, Haiku does.
+    var appStatus = activity == .idle && !transcript.commandRunning && transcript.question == nil
+        ? askAppStatus()
+        : nil
+    var grade: GradeState = activity == .working || appStatus != nil ? .none : askGrade()
+    // A background command still running: if the session said it is only
+    // waiting (on CI, a review), it stays under Waiting, and if its reply
+    // asks you something meanwhile (run a command, approve), it stays
+    // under Needs you; otherwise the command is its work in progress
+    // (a test run), so it is working.
+    if transcript.commandRunning {
+        var staysIdle = false
+        if case .graded(let g) = grade { staysIdle = g.effort != .nothing }
+        if !staysIdle { activity = .working; grade = .none }
+    }
+    // A helper agent still working: the session wakes when it's done, so
+    // it is working, unless its reply asks you something meanwhile.
+    if transcript.agentRunning {
+        var asksYou: Bool
+        switch appStatus {
+        case .blocked: asksYou = true
+        // "Ready for review" with nothing for you to do is where it
+        // stands until its helper agent reports back.
+        case .reviewReady:
+            asksYou = !(needsAction ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .finished: asksYou = false
+        case nil:
+            switch grade {
+            case .graded(let g): asksYou = g.effort != .waiting && g.effort != .nothing
+            case .failed: asksYou = true
+            case .grading, .none: asksYou = false
+            }
+        }
+        if !asksYou { activity = .working; grade = .none; appStatus = nil }
+    }
+    // An "Allow / Deny" prompt nobody answered: whatever it or its helper
+    // agent was doing, it does nothing more until you click.
+    var question = transcript.question
+    if question == nil, let tool = prompt {
+        question = "Allow or deny: \(tool)"
+        activity = .idle; grade = .none; appStatus = nil
+    }
+    return (activity, grade, appStatus, question)
+}
+
 // MARK: - Store
 
 // MARK: - Updates (only for a copy Homebrew installed)
@@ -643,53 +700,13 @@ final class Store: ObservableObject {
         let last = Date(timeIntervalSince1970: (file.lastActivityAt ?? 0) / 1000)
         let transcript = readTranscript(cliSessionId: file.cliSessionId)
         let isRecent = Date().timeIntervalSince(last) < staleAfter
-        var activity = transcript.activity
-        // The app's status, when it describes the reply the log ends on.
-        // Skipped while a background command runs: the status doesn't say
-        // whether the session is only waiting on CI, Haiku does.
-        var appStatus = activity == .idle && !transcript.commandRunning && transcript.question == nil
-            ? currentAppStatus(file, replyId: transcript.reply?.id)
-            : nil
-        var grade: GradeState = activity == .working || appStatus != nil
-            ? .none
-            : gradeState(sessionId: file.sessionId, reply: transcript.reply, gradeIfNeeded: isRecent)
-        // A background command still running: if the session said it is only
-        // waiting (on CI, a review), it stays under Waiting, and if its reply
-        // asks you something meanwhile (run a command, approve), it stays
-        // under Needs you; otherwise the command is its work in progress
-        // (a test run), so it is working.
-        if transcript.commandRunning {
-            var staysIdle = false
-            if case .graded(let g) = grade { staysIdle = g.effort != .nothing }
-            if !staysIdle { activity = .working; grade = .none }
-        }
-        // A helper agent still working: the session wakes when it's done, so
-        // it is working, unless its reply asks you something meanwhile.
-        if transcript.agentRunning {
-            var asksYou: Bool
-            switch appStatus {
-            case .blocked: asksYou = true
-            // "Ready for review" with nothing for you to do is where it
-            // stands until its helper agent reports back.
-            case .reviewReady:
-                asksYou = !(file.postTurnSummary?.needs_action ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            case .finished: asksYou = false
-            case nil:
-                switch grade {
-                case .graded(let g): asksYou = g.effort != .waiting && g.effort != .nothing
-                case .failed: asksYou = true
-                case .grading, .none: asksYou = false
-                }
-            }
-            if !asksYou { activity = .working; grade = .none; appStatus = nil }
-        }
-        // An "Allow / Deny" prompt nobody answered: whatever it or its helper
-        // agent was doing, it does nothing more until you click.
-        var question = transcript.question
-        if question == nil, let tool = prompts.values.first(where: { $0.session == file.sessionId })?.tool {
-            question = "Allow or deny: \(tool)"
-            activity = .idle; grade = .none; appStatus = nil
-        }
+        let state = classify(
+            transcript,
+            askAppStatus: { currentAppStatus(file, replyId: transcript.reply?.id) },
+            needsAction: file.postTurnSummary?.needs_action,
+            askGrade: { gradeState(sessionId: file.sessionId, reply: transcript.reply, gradeIfNeeded: isRecent) },
+            prompt: prompts.values.first(where: { $0.session == file.sessionId })?.tool)
+        let (activity, grade, appStatus, question) = (state.activity, state.grade, state.appStatus, state.question)
         let prs: [SessionPR] = (file.prs ?? []).compactMap { pr in
             guard let number = pr.prNumber, let repo = pr.repo else { return nil }
             return SessionPR(number: number, repo: repo, state: pr.state ?? "OPEN")
@@ -737,12 +754,12 @@ final class Store: ObservableObject {
 
         for line in text.split(separator: "\n") {
             if line.contains("Emitted tool permission request") {
-                let found = matches(#"request ([0-9a-f-]+) for (\S+) in session (local_[0-9a-f-]+)"#, groups: 3, in: line)
+                let found = TranscriptReader.matches(#"request ([0-9a-f-]+) for (\S+) in session (local_[0-9a-f-]+)"#, groups: 3, in: line)
                 if found.count == 3 { prompts[found[0]] = (found[2], found[1]) }
             } else if line.contains("Received permission response for") {
-                if let id = matches(#"response for ([0-9a-f-]+)"#, in: line).first { prompts[id] = nil }
+                if let id = TranscriptReader.matches(#"response for ([0-9a-f-]+)"#, in: line).first { prompts[id] = nil }
             } else if line.contains("LocalSessions.interrupt:") || line.contains("Starting local session") {
-                if let session = matches(#"(local_[0-9a-f-]+)"#, in: line).first {
+                if let session = TranscriptReader.matches(#"(local_[0-9a-f-]+)"#, in: line).first {
                     prompts = prompts.filter { $0.value.session != session }
                 }
             }
@@ -849,11 +866,36 @@ final class Store: ObservableObject {
         return nil
     }
 
+    // Working when the log's last message isn't a finished reply from Claude.
+    // When it is, that reply's text is what Claude left for you.
+    // Re-reading and splitting the log tail for every session every few
+    // seconds kept the app at ~90% CPU, so a log that hasn't changed (same
+    // size and modification time) reuses its last result, unless that result
+    // depends on the clock or on a background job's output file.
+    private var transcriptCache: [String: (size: UInt64, modified: Date, state: TranscriptState)] = [:]
+
+    private func readTranscript(cliSessionId: String?) -> TranscriptState {
+        guard let id = cliSessionId, let path = transcriptPath(id),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let size = (attrs[.size] as? NSNumber)?.uint64Value,
+              let modified = attrs[.modificationDate] as? Date
+        else { return TranscriptState(activity: .idle, reply: nil) }
+        if let hit = transcriptCache[path], hit.size == size, hit.modified == modified { return hit.state }
+        let (state, dependsOnClock) = TranscriptReader.parse(path: path, cliSessionId: id)
+        if dependsOnClock { transcriptCache[path] = nil }
+        else { transcriptCache[path] = (size, modified, state) }
+        return state
+    }
+}
+
+// MARK: - Reading a session's log
+
+enum TranscriptReader {
     // A background job (a command or a helper agent) that started and hasn't
     // sent its "finished" notice yet, and that wrote output within the last
     // `stalledAfter`. The output check keeps a forgotten dev server, or a job
     // that died with its app, from keeping a session "working" forever.
-    private func liveBackgroundWork(_ log: String, transcript: String, cliSessionId: String) -> BackgroundWork {
+    static func liveBackgroundWork(_ log: String, transcript: String, cliSessionId: String) -> BackgroundWork {
         var started: [String: (file: String, isAgent: Bool)] = [:]
         var finished = Set<String>()
         let subagents = ((transcript as NSString).deletingLastPathComponent as NSString)
@@ -915,7 +957,7 @@ final class Store: ObservableObject {
 
     // The session's last act was a question card or a plan to approve, with
     // no answer yet: it does nothing until you click.
-    private func pendingQuestion(_ message: [String: Any]) -> String? {
+    private static func pendingQuestion(_ message: [String: Any]) -> String? {
         let blocks = message["content"] as? [[String: Any]] ?? []
         for block in blocks where block["type"] as? String == "tool_use" {
             switch block["name"] as? String {
@@ -933,7 +975,7 @@ final class Store: ObservableObject {
     }
 
     // The first group of every match; with `groups`, each group of the first match.
-    private func matches(_ pattern: String, groups: Int = 1, in line: Substring) -> [String] {
+    static func matches(_ pattern: String, groups: Int = 1, in line: Substring) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let text = String(line)
         let found = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
@@ -946,32 +988,16 @@ final class Store: ObservableObject {
         }
     }
 
-    // Working when the log's last message isn't a finished reply from Claude.
-    // When it is, that reply's text is what Claude left for you.
-    // Re-reading and splitting the log tail for every session every few
-    // seconds kept the app at ~90% CPU, so a log that hasn't changed (same
-    // size and modification time) reuses its last result, unless that result
-    // depends on the clock or on a background job's output file.
-    private var transcriptCache: [String: (size: UInt64, modified: Date, state: TranscriptState)] = [:]
-    private var parseDependsOnClock = false
-
-    private func readTranscript(cliSessionId: String?) -> TranscriptState {
-        guard let id = cliSessionId, let path = transcriptPath(id),
-              let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let size = (attrs[.size] as? NSNumber)?.uint64Value,
-              let modified = attrs[.modificationDate] as? Date
-        else { return TranscriptState(activity: .idle, reply: nil) }
-        if let hit = transcriptCache[path], hit.size == size, hit.modified == modified { return hit.state }
-        parseDependsOnClock = false
-        let state = parseTranscript(cliSessionId: id)
-        if parseDependsOnClock { transcriptCache[path] = nil }
-        else { transcriptCache[path] = (size, modified, state) }
-        return state
+    /// What the log at `path` says, and whether that depends on the clock or
+    /// on a background job's output file (so it can't be reused unchanged).
+    static func parse(path: String, cliSessionId id: String) -> (TranscriptState, dependsOnClock: Bool) {
+        var parseDependsOnClock = false
+        let state = parse(path: path, cliSessionId: id, dependsOnClock: &parseDependsOnClock)
+        return (state, parseDependsOnClock)
     }
 
-    private func parseTranscript(cliSessionId: String?) -> TranscriptState {
-        guard let id = cliSessionId, let path = transcriptPath(id),
-              let handle = FileHandle(forReadingAtPath: path)
+    private static func parse(path: String, cliSessionId id: String, dependsOnClock parseDependsOnClock: inout Bool) -> TranscriptState {
+        guard let handle = FileHandle(forReadingAtPath: path)
         else { return TranscriptState(activity: .idle, reply: nil) }
         defer { try? handle.close() }
 
@@ -1562,7 +1588,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// Tests bring their own entry point (see tests/run.sh).
+#if !TESTING
 @main
+#endif
 enum BlackRoijaApp {
     static func main() {
         let app = NSApplication.shared

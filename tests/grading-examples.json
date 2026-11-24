@@ -1,0 +1,79 @@
+[
+  {
+    "name": "Only ask comes after the wait ends: 'when the checks are green, run this' (06d0567)",
+    "reply": "**Status:** I'm waiting for [PR 431: ask to re-sync the calendar when a new account is linked](https://github.com/example-org/example-app/pull/431) to merge. I check every 5 minutes for up to 24 hours.\n**Needs you:** 1 request (12). Without it, I'll stop just before the merge.\n\n**What happens after PR 431 merges:**\n1. I rebase this PR. PR 431 adds database change `0052`, so this one becomes `0053`. I'll update your dev database's records to match.\n2. Type check, lint, unit tests, then a push with the browser test run, the automated review on that commit, and any fixes they need.\n3. Merge. The new import screen stays hidden from customers: you set `IMPORT_SCREEN_ENABLED` to `false`, so only admins see it.\n4. Post the changelog note, then clean up and archive.\n\n**Why I'll stop before step 3:** this PR's database change has to be on production before the code merges. Production's Inbox and Archive pages read the new import tables. Without them, those pages fail for every user. I can't run `npm run migrate:prod` myself, because I don't have production's database access.\n\n**What I need from you**\n\n**12.** When the checks are green, I'll post the exact command here. Run `npm run migrate:prod` from the PR's branch and tell me it's done, and I'll merge right away. If you'd rather I post the announcement before that, say so.",
+    "expected": [
+      "waiting"
+    ]
+  },
+  {
+    "name": "Finished PR that says it needs nothing while CI still runs (74f9e6b)",
+    "reply": "**Status:** fix is in a PR. CI and the review bot are still running.\n\n**Needs you:** nothing.\n\n**A** ✓ The error alert was a false alarm. I opened [PR 512: stop alerting when the CSV import finds no rows](https://github.com/example-org/example-app/pull/512) to stop it.\n\n**A.** The alert came from an account in the setup flow. Its uploaded file had a header row and nothing else, so it looks like a teammate's test account. The import correctly found no rows, and the setup flow showed the empty form. The user filled it in a few seconds later, so nobody was blocked.\n\nWith the fix, the setup flow still behaves the same: the user gets the empty form. The difference is that this case now goes to the logs instead of the alerting service. The alerting service still gets an alert when the import's result is actually broken: unreadable, the wrong shape, or an empty `{}`.\n\nWhat I ran:\n- The unit tests for the CSV import: 48 passed. A new test covers the \"nothing found\" answers, and the existing test that expects an alert for `{}` still passes.\n- Lint on the changed files: clean.\n- The type check: no new errors.\n\nThere's no screen or database change.\n\nSelf-review: three files changed (the import code, the list of failure reasons, and one spec). No leftovers. All work is committed and pushed.\n\n**What I need from you**\n\nNothing.",
+    "expected": [
+      "review"
+    ]
+  },
+  {
+    "name": "Asks you to run a command now, while it waits on another PR",
+    "reply": "**Status:** I'm waiting for [PR 431: ask to re-sync the calendar when a new account is linked](https://github.com/example-org/example-app/pull/431) to merge. I check every 5 minutes.\n\n**Why I'll stop before the merge:** this PR's database change has to be on production before the code merges, and I don't have production's database access.\n\n**What I need from you**\n\n**12.** Meanwhile, run `npm run migrate:prod` now from the PR's branch and tell me when it's done, so I can merge right after PR 431 lands.",
+    "expected": [
+      "handsOn"
+    ]
+  },
+  {
+    "name": "Will merge it itself once its tests pass, as you already said",
+    "reply": "The browser tests on [PR 512: stop alerting when the CSV import finds no rows](https://github.com/example-org/example-app/pull/512) have only just started. All other checks have passed. I'll check again in about 10 minutes. If they pass, I'll merge the PR, mark the task shipped, delete the copy of the code at `~/work/_worktrees/fix-import-alert` and its branch, and archive this conversation.",
+    "expected": [
+      "waiting"
+    ]
+  },
+  {
+    "name": "Plain wait on CI, nothing ready yet",
+    "reply": "I pushed the retry fix to the branch and re-ran the flaky upload test locally 20 times: all green.\n\nCI is running on the new commit now (about 12 minutes). I'll check back when it finishes and fix anything it turns up before I come back to you.",
+    "expected": [
+      "waiting"
+    ]
+  },
+  {
+    "name": "Asks you to run a command while its test run goes (41fd4a7)",
+    "reply": "**Status:** not merged yet. Your deploy didn't add the settings change to production. I've fixed that on the PR, and it needs one more deploy from you.\n\n**C** … The full end-to-end run is going (about 10 minutes).\n\n## What I need from you\n\n**3.** Run this from the PR's copy of the code, then tell me it's done:\n\n```bash\ncd ~/work/example-app-feature && npm run migrate:prod\n```\n\nI'll check that production has the new columns before I merge.",
+    "expected": [
+      "handsOn"
+    ]
+  },
+  {
+    "name": "Waits on its own background test run, after you said merge both (7ab74d5)",
+    "reply": "PR 214 is up to date with main, and its full browser tests are running (about 10 minutes). After it merges, I'll do the same for PR 209.",
+    "expected": [
+      "waiting"
+    ]
+  },
+  {
+    "name": "'Say merge and I'll do the rest'",
+    "reply": "Both PRs are ready to merge: [PR 214, which fixes the keyboard shortcut](https://github.com/example-org/example-app/pull/214), and [PR 209, which stops the empty-import alert](https://github.com/example-org/example-app/pull/209). Their checks are green and the review bot has no comments left.\n\nSay \"merge\" and I'll do the rest: update both with main, run the full browser tests, merge them, mark their tasks shipped and clean up.",
+    "expected": [
+      "click"
+    ]
+  },
+  {
+    "name": "Two questions that need some thought",
+    "reply": "The settings page now saves on every change, and the tests pass.\n\nTwo things I need you to decide:\n\n1. Should the \"Reset\" button also clear the saved drafts, or only the settings? Clearing drafts can't be undone.\n2. The old \"Save\" button is gone. Do you want a short note at the top of the page for the first week, or nothing?",
+    "expected": [
+      "reply"
+    ]
+  },
+  {
+    "name": "Asks you to test on your phone",
+    "reply": "I pushed the fix to [PR 220: keep the menu open when you scroll](https://github.com/example-org/example-app/pull/220). The preview is at https://pr-220.preview.example.com.\n\nCan you open it on your phone, scroll the menu, and tell me if it still closes? I can't reproduce it in the desktop browser's phone mode.",
+    "expected": [
+      "handsOn"
+    ]
+  },
+  {
+    "name": "Done after its PR merged, nothing left",
+    "reply": "[PR 205: fix the date in the weekly email](https://github.com/example-org/example-app/pull/205) is merged and deployed. I checked the next scheduled email in the preview: it shows the right date. The task is marked shipped, and the branch and its copy of the code are deleted.\n\n**What I need from you:** Nothing.",
+    "expected": [
+      "nothing"
+    ]
+  }
+]

@@ -1,2 +1,3 @@
 blackroija.app/
 .build-staging/
+.build-tests/
