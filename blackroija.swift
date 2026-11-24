@@ -225,6 +225,7 @@ struct TranscriptState {
 struct BackgroundWork {
     var agents = false   // a helper agent still working
     var commands = false // a background command still running
+    var tracked = false  // a job started and not finished, whether or not it still writes
 }
 
 // MARK: - Grading
@@ -886,6 +887,7 @@ final class Store: ObservableObject {
         let now = Date()
         var work = BackgroundWork()
         for (id, job) in started where !finished.contains(id) {
+            work.tracked = true
             guard let written = (try? FileManager.default.attributesOfItem(atPath: job.file))?[.modificationDate] as? Date,
                   now.timeIntervalSince(written) < stalledAfter
             else { continue }
@@ -929,7 +931,28 @@ final class Store: ObservableObject {
 
     // Working when the log's last message isn't a finished reply from Claude.
     // When it is, that reply's text is what Claude left for you.
+    // Re-reading and splitting the log tail for every session every few
+    // seconds kept the app at ~90% CPU, so a log that hasn't changed (same
+    // size and modification time) reuses its last result, unless that result
+    // depends on the clock or on a background job's output file.
+    private var transcriptCache: [String: (size: UInt64, modified: Date, state: TranscriptState)] = [:]
+    private var parseDependsOnClock = false
+
     private func readTranscript(cliSessionId: String?) -> TranscriptState {
+        guard let id = cliSessionId, let path = transcriptPath(id),
+              let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let size = (attrs[.size] as? NSNumber)?.uint64Value,
+              let modified = attrs[.modificationDate] as? Date
+        else { return TranscriptState(activity: .idle, reply: nil) }
+        if let hit = transcriptCache[path], hit.size == size, hit.modified == modified { return hit.state }
+        parseDependsOnClock = false
+        let state = parseTranscript(cliSessionId: id)
+        if parseDependsOnClock { transcriptCache[path] = nil }
+        else { transcriptCache[path] = (size, modified, state) }
+        return state
+    }
+
+    private func parseTranscript(cliSessionId: String?) -> TranscriptState {
         guard let id = cliSessionId, let path = transcriptPath(id),
               let handle = FileHandle(forReadingAtPath: path)
         else { return TranscriptState(activity: .idle, reply: nil) }
@@ -977,6 +1000,7 @@ final class Store: ObservableObject {
                 }
                 let finished = type == "assistant" && message["stop_reason"] as? String == "end_turn"
                 if !finished {
+                    parseDependsOnClock = true
                     let stalled = Date().timeIntervalSince(modified) > stalledAfter
                     let jobs = liveBackgroundWork(text, transcript: path, cliSessionId: id)
                     if !stalled || jobs.agents || jobs.commands { return TranscriptState(activity: .working, reply: nil) }
@@ -992,6 +1016,7 @@ final class Store: ObservableObject {
                 // will wake it when done. The reply decides whether it also
                 // asks you something meanwhile.
                 background = liveBackgroundWork(text, transcript: path, cliSessionId: id)
+                if background.tracked { parseDependsOnClock = true }
                 activity = .idle
                 replyId = json["uuid"] as? String
             }
