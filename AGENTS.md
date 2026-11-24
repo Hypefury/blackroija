@@ -24,7 +24,7 @@ A floating macOS window, written in Swift, that lists your Claude Code sessions 
 
 ## Releasing
 
-- A release is a `vX.Y.Z` tag on `master`. Pushing it is all it takes: the Homebrew tap (`Hypefury/homebrew-tap`) follows the newest tag within the hour, and the app's Update button offers it to Homebrew installs.
+- A release is a `vX.Y.Z` tag on `master`. Pushing it is all it takes: a workflow here tells the Homebrew tap (`Hypefury/homebrew-tap`) at once, so its formula follows within a minute (the tap also checks every hour, as a backup), and the app's Update button offers the new version to Homebrew installs. The workflow needs the repo secret `TAP_TOKEN`; if it's missing or expired, the hourly check still catches up.
 - When your work is done and on `master` (or ready to go there), suggest a release and say which kind. A patch, the `z` in `x.y.z` (`0.2.2` to `0.2.3`), is for fixes and changes nobody sees. A minor, the `y` (`0.2.2` to `0.3.0`), is for something new the user sees or does. Say why in one sentence. Leave the `x` alone unless the user asks.
 - Only tag when asked. Tag the commit that's on `origin/master`, push with `git push origin refs/tags/vX.Y.Z`, and check the tap's formula points at the new tag afterwards.
 - `./build.sh` takes the version from the `VERSION` environment variable (default `0.1`), so a build from a clone only shows the right number if you set it.
