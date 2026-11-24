@@ -1004,12 +1004,13 @@ struct Row: View {
     }
 }
 
-/// The repos to list PRs for: the GitHub repo of every session's folder, plus
-/// every repo a session has an open PR on. Each repo once, whatever its
+/// The repos to list PRs for: the GitHub repo of every fresh session, plus
+/// every repo such a session has an open PR on. Each repo once, whatever its
 /// capitalization.
-func prRepoList(_ sessions: [Session]) -> Set<String> {
+func prRepoList(_ sessions: [Session], now: Date = Date()) -> Set<String> {
+    let fresh = sessions.filter { isFresh($0, now: now) }
     var byKey: [String: String] = [:]
-    for repo in sessions.compactMap(\.repo) + sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
+    for repo in fresh.compactMap(\.repo) + fresh.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
         if byKey[repo.lowercased()] == nil { byKey[repo.lowercased()] = repo }
     }
     return Set(byKey.values)
@@ -1165,27 +1166,30 @@ struct MergeQueue {
     var ready: [OpenPR] = []
     var failing: [OpenPR] = []
     var conflicts: [OpenPR] = []
-    var noSession: [OpenPR] = []
-    // The PRs shown: yours, plus teammates' ones an open session works on.
+    // The PRs shown: the open ones that a session from the last week works on.
     var shown: [OpenPR] = []
 
-    init(_ open: [OpenPR], sessions: [Session]) {
-        let tracked = Set(sessions.flatMap { $0.prs.map { "\($0.repo.lowercased())#\($0.number)" } })
-        shown = open.filter { $0.mine || !$0.keys.isDisjoint(with: tracked) }.sorted { $0.number > $1.number }
+    init(_ open: [OpenPR], sessions: [Session], now: Date = Date()) {
+        let tracked = Set(sessions.filter { isFresh($0, now: now) }
+            .flatMap { $0.prs.map { "\($0.repo.lowercased())#\($0.number)" } })
+        shown = open.filter { !$0.keys.isDisjoint(with: tracked) }.sorted { $0.number > $1.number }
         ready = shown.filter(\.isReady)
         failing = shown.filter { !$0.isDraft && $0.isFailing }
         conflicts = shown.filter(\.hasConflicts)
-        noSession = shown.filter { $0.keys.isDisjoint(with: tracked) }
     }
 
     var isEmpty: Bool { shown.isEmpty }
 }
 
+/// A session still worth showing: working, or active within the last week.
+/// The session list and the PR list both follow this rule.
+func isFresh(_ session: Session, now: Date) -> Bool {
+    session.activity == .working || now.timeIntervalSince(session.lastActivity) < staleAfter
+}
+
 /// Splits sessions the way the window shows them.
 func arrange(_ sessions: [Session], now: Date, problems: [String: String] = [:]) -> (stuck: [(session: Session, reason: String)], answer: [Session], needsYou: [Session], working: [Session], quiet: [Session], stale: Int) {
-    let all = sessions.filter {
-        $0.activity == .working || now.timeIntervalSince($0.lastActivity) < staleAfter
-    }
+    let all = sessions.filter { isFresh($0, now: now) }
     // Stuck sessions get their own section on top; the rest split as before.
     // Every list is newest first: the session that replied most recently
     // comes first.
@@ -1240,7 +1244,7 @@ struct ContentView: View {
                         .font(.system(size: 12)).foregroundStyle(.tertiary)
                 }
                 if let open = store.openPRs {
-                    mergeStrip(MergeQueue(open, sessions: store.sessions))
+                    mergeStrip(MergeQueue(open, sessions: store.sessions, now: now))
                         .padding(.top, 8)
                 }
                 if let prError = store.prError {
@@ -1263,7 +1267,6 @@ struct ContentView: View {
         if !queue.isEmpty {
             // One PR per line: problems first, then passing, then the rest.
             let failing = Set(queue.failing), conflicts = Set(queue.conflicts), ready = Set(queue.ready)
-            let noSession = Set(queue.noSession)
             let rank: (OpenPR) -> Int = { failing.contains($0) ? 0 : conflicts.contains($0) ? 1 : ready.contains($0) ? 2 : 3 }
             let prs = queue.shown.sorted { rank($0) != rank($1) ? rank($0) < rank($1) : $0.number > $1.number }
             let labels = Set(prs.map { repoLabel($0.repo) })
@@ -1284,7 +1287,6 @@ struct ContentView: View {
                                          conflicts.contains(pr) ? "conflicts" : nil,
                                          pr.isDraft ? "draft" : nil,
                                          pr.isStacked ? "stacked" : nil,
-                                         noSession.contains(pr) ? "no session" : nil,
                                          pr.mine ? nil : pr.author.map { "by \($0.login)" }].compactMap { $0 }
                             prRow(pr, color: failing.contains(pr) ? .red : conflicts.contains(pr) ? .orange
                                       : ready.contains(pr) ? .green : .gray,
@@ -1407,7 +1409,7 @@ enum BlackRoijaApp {
             let now = Date()
             let store = Store(gradeInBackground: false)
             let all = (try? store.scan()) ?? []
-            let open = try? Store.loadOpenPRs(prRepoList(all))
+            let open = try? Store.loadOpenPRs(prRepoList(all, now: now))
             let problems = prProblems(open)
             let groups = arrange(all, now: now, problems: problems)
             print("== STUCK")
@@ -1425,9 +1427,9 @@ enum BlackRoijaApp {
             }
             print("\(groups.stale) more idle for over a week")
             if let open {
-                let queue = MergeQueue(open, sessions: all)
+                let queue = MergeQueue(open, sessions: all, now: now)
                 for (name, list) in [("PRS SHOWN", queue.shown), ("CHECKS PASSING", queue.ready), ("CHECKS FAILING", queue.failing),
-                                     ("CONFLICTS", queue.conflicts), ("NO SESSION", queue.noSession)] {
+                                     ("CONFLICTS", queue.conflicts)] {
                     print("== \(name): " + list.map { "\($0.repo.split(separator: "/").last ?? "")#\($0.number)" }.joined(separator: ", "))
                 }
             }
