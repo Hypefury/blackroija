@@ -85,7 +85,7 @@ enum Effort: String, Codable {
 
 // Bump when the triage instructions change, so saved answers made with the
 // old ones are asked again.
-let gradeInstructionsVersion = 4
+let gradeInstructionsVersion = 5
 
 struct Grade: Codable {
     let replyId: String
@@ -254,8 +254,20 @@ enum Grader {
         For "waiting", say what it waits on instead ("Waiting for PR 650 to merge"). \
         Empty string when nothing is asked.
 
+        Check this first: if the message has an open PR the agent calls done, fixed or \
+        ready, effort is never "waiting" or "nothing": the person still has to look at it \
+        and merge it. If the message only asks for a go-ahead to merge ("Say merge and \
+        I'll do the rest"), it is "click"; if it asks nothing about it, it is "review" \
+        ("Review and merge PR 512"). That holds even while the PR's checks or a review bot still \
+        run, and even when the message says it needs nothing from the person. The one \
+        exception: the agent says what it does itself once the checks or tests pass, such \
+        as merging the PR or going on to the next one ("I'll merge it when the tests pass", \
+        "After it merges, I'll do the same for the next one"). Then the person already said \
+        to merge and the agent is still at work, so it is "waiting".
+
         effort, the hardest of everything the message asks for:
-        - "click": answer yes or no, approve, merge, or pick one of the options offered
+        - "click": answer yes or no, approve, merge, or pick one of the options offered, \
+        when the answer needs no real thought
         - "reply": write a short answer or make a decision that needs some thought
         - "review": look at screenshots, a diff, a draft or a document before answering
         - "handsOn": test it themselves, run a command, sign in, change a setting, \
@@ -268,10 +280,7 @@ enum Grader {
         run this command") is not something they can do now, so it is still "waiting". \
         A PR or other work the agent says it finished is ready for the person, even while \
         its checks still run and even if it says it needs nothing: they still have to look \
-        at it and merge it, so it is "review" ("Review and merge PR 512"), never "waiting". \
-        Unless the agent says it will merge it itself once its checks or tests pass \
-        ("After it merges, I'll do the same for the next one"): the person already said \
-        to merge, so it is "waiting".
+        at it and merge it, so it is "review", unless the agent merges it itself (see above).
         - "nothing": the agent reports work done and asks for nothing, and none of it is left \
         for the person to review or merge ("What I need from you: Nothing" after its PR merged). \
         An open PR it made is "review", even when the message says it needs nothing.
