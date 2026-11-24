@@ -4,6 +4,11 @@
 # current app in place.
 set -e
 cd "$(dirname "$0")"
+# Homebrew sets VERSION. A build from a clone uses the nearest tag, so it says
+# e.g. 0.2.5-3-g2b0edcf: three commits after v0.2.5.
+if [ -z "${VERSION:-}" ]; then
+  VERSION="$(git describe --tags 2>/dev/null | sed 's/^v//')"
+fi
 VERSION="${VERSION:-0.1}"
 APP="blackroija.app"
 STAGE=".build-staging"
