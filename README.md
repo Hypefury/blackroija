@@ -4,7 +4,9 @@ A small floating Mac window that lists your open Claude Code sessions (the Code 
 
 It only reads files on your Mac and GitHub. It never sends anything to a session or changes a PR.
 
-<img src="docs/screenshot.png" alt="The Session Status window" width="428">
+<img src="docs/overview.png" alt="The Session Status window: one stuck session, five that need you, three working and one waiting" width="446">
+
+The screenshots here use made-up sessions and PRs.
 
 ## What you see
 
@@ -16,11 +18,22 @@ Sessions are sorted into sections, and grouped by app (Web app, Mobile, Website)
 - **Waiting** (dimmed): idle, but only waiting on CI or another PR.
 - Sessions idle for over a week are only counted, at the bottom.
 
+<p>
+  <img src="docs/stuck.png" alt="Three stuck sessions on top, each with a line saying why" width="400">
+  <img src="docs/all-quiet.png" alt="Nothing needs you: four sessions working and three waiting on checks" width="400">
+</p>
+
+On the left, three stuck sessions come first, each with the reason. On the right, nothing needs you: every session is working or waiting on checks.
+
 Each row shows the title, how long it's been idle and all its open PRs. A PR marked "(failing)" has failing checks, and one marked "(conflicts)" has merge conflicts. Click a row to open the session, or click a PR number to open it on GitHub. Hover over a row to see what the session is asking for.
 
 At the bottom, **PRs** lists your own open PRs, plus teammates' PRs that an open session works on, grouped by app. Each one shows a colored dot (red for failing checks, orange for conflicts, green for passing, gray for a draft, a stacked PR or pending checks), its number and its title. Click "PRs" to fold the list.
 
+<img src="docs/prs.png" alt="The PR list, grouped by app, with a colored dot and a note for each PR" width="486">
+
 **Control-Option-N**, from any app, opens the next session that needs you: stuck sessions first, then blocked ones, then the rest. Press it again to move on. The last session it opened is shaded in the window.
+
+<img src="docs/needs-you.png" alt="Seven sessions that need you, red dots for the blocked ones, with the last one opened shaded" width="446">
 
 Right-click the window for Refresh, the same "next session" action, and Quit.
 
