@@ -127,6 +127,8 @@ struct Session: Identifiable {
     var appStatus: AppStatus? = nil
     // Its turn stopped without finishing: why.
     var stopped: String? = nil
+    // A command it started in the background still runs; it wakes when done.
+    var commandRunning = false
 }
 
 struct SessionPR: Hashable {
@@ -702,7 +704,8 @@ final class Store: ObservableObject {
             grade: grade,
             question: question,
             appStatus: appStatus,
-            stopped: question == nil ? transcript.stopped : nil
+            stopped: question == nil ? transcript.stopped : nil,
+            commandRunning: transcript.commandRunning
         )
     }
 
@@ -1206,9 +1209,11 @@ extension SessionPR {
 /// Why a session is stuck, or nil: its turn stopped without finishing, or
 /// it sits idle, asking nothing, while one of its PRs fails its checks.
 /// Merge conflicts don't count: rebasing late is a choice, not a block.
+/// Nor does a session waiting on its own background command (tests it
+/// runs before fixing that PR): it wakes when the command ends.
 func stuckReason(_ session: Session, problems: [String: String]) -> String? {
     if let stopped = session.stopped { return stopped }
-    guard session.activity == .idle, !session.blockedOnYou else { return nil }
+    guard session.activity == .idle, !session.blockedOnYou, !session.commandRunning else { return nil }
     // A reply that asks you something (test this, answer that) waits on you,
     // not on its PR. One still being read isn't stuck yet either.
     if case .reviewReady = session.appStatus { return nil }
