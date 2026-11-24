@@ -31,14 +31,6 @@ let gradesFile = "\(home)/Library/Application Support/blackroija/grades.json"
 let appLog = "\(home)/Library/Logs/Claude/main.log"
 let appLogBefore = "\(home)/Library/Logs/Claude/main1.log"
 
-// Repo git folder -> label shown in the window. Sessions in any other
-// folder are listed too, under their repo's folder name.
-let projects: [String: String] = [
-    "\(home)/workspace/hypefury-v2/.git": "Web app",
-    "\(home)/workspace/hypefury-website/.git": "Website",
-    "\(home)/workspace/hypefury-v2-mobile/.git": "Mobile",
-]
-
 // A Mac app opened from Finder doesn't get the shell's PATH: look in the
 // usual install places.
 let claudeCandidates = [
@@ -397,7 +389,7 @@ final class Store: ObservableObject {
             guard process.terminationStatus == 0 else {
                 // A repo only a session mentions may be gone or private to
                 // someone else: skip it rather than lose the whole list.
-                if !Set(repos.values).contains(repo) { continue }
+                if !watchedRepos.contains(repo) { continue }
                 throw NSError(domain: "blackroija", code: 2, userInfo: [NSLocalizedDescriptionKey: "couldn't list PRs for \(repo)"])
             }
             for var pr in try JSONDecoder().decode([OpenPR].self, from: data) {
@@ -554,7 +546,7 @@ final class Store: ObservableObject {
             activity = .idle; grade = .none; appStatus = nil
         }
         let prs: [SessionPR] = (file.prs ?? []).compactMap { pr in
-            guard let number = pr.prNumber, let repo = pr.repo ?? repos[project] else { return nil }
+            guard let number = pr.prNumber, let repo = pr.repo else { return nil }
             return SessionPR(number: number, repo: repo, state: pr.state ?? "OPEN")
         }
         return Session(
@@ -670,7 +662,7 @@ final class Store: ObservableObject {
         }
     }
 
-    // "gitdir: /Users/me/workspace/hypefury-v2/.git/worktrees/x" -> ".../hypefury-v2/.git"
+    // "gitdir: /Users/me/workspace/my-repo/.git/worktrees/x" -> ".../my-repo/.git"
     private func worktreeCommonDir(_ folder: String) -> String? {
         guard let text = try? String(contentsOfFile: "\(folder)/.git", encoding: .utf8),
               text.hasPrefix("gitdir:"),
@@ -680,26 +672,13 @@ final class Store: ObservableObject {
         return text[start..<range.lowerBound].trimmingCharacters(in: .whitespaces) + "/.git"
     }
 
+    // The group a session is listed under: its repo's folder name.
     private func projectLabel(_ file: SessionFile) -> String? {
-        for anchor in file.gitAnchors ?? [] {
-            if let dir = anchor.commonDir, let label = projects[dir] { return label }
-        }
-        if let origin = file.originCwd {
-            if let label = projects["\(origin)/.git"] { return label }
-            // A session started inside a worktree records no repo; the
-            // worktree's .git file points back into the repo's .git folder.
-            if let common = worktreeCommonDir(origin), let label = projects[common] { return label }
-        }
-        // The repo its PR was opened on.
-        for pr in file.prs ?? [] {
-            if let repo = pr.repo, let label = repos.first(where: { $0.value.lowercased() == repo.lowercased() })?.key {
-                return label
-            }
-        }
-        // Any other folder: its repo's folder name.
         if let dir = file.gitAnchors?.compactMap(\.commonDir).first {
             return folderName(dir)
         }
+        // A session started inside a worktree records no repo; the
+        // worktree's .git file points back into the repo's .git folder.
         if let origin = file.originCwd {
             return folderName(worktreeCommonDir(origin) ?? origin)
         }
@@ -1024,36 +1003,33 @@ struct Row: View {
     }
 }
 
-/// Where each app's pull requests live on GitHub.
-let repos = [
-    "Web app": "Hypefury/hypefury-v2",
-    "Mobile": "Hypefury/hypefury-v2-mobile",
-    "Website": "Hypefury/hypefury-website",
+/// The repos whose open PRs are always listed, even when no session works on
+/// them ("owner/name").
+let watchedRepos: Set<String> = [
+    "Hypefury/hypefury-v2",
+    "Hypefury/hypefury-v2-mobile",
+    "Hypefury/hypefury-website",
 ]
 
-/// The order apps are listed in within each section; other projects follow
-/// in name order.
-let appOrder = ["Web app", "Mobile", "Website"]
-
-/// The repos to list PRs for: the known ones, plus any a session has an open
+/// The repos to list PRs for: the watched ones, plus any a session has an open
 /// PR on. Each repo once, whatever its capitalization.
 func prRepoList(_ sessions: [Session]) -> Set<String> {
     var byKey: [String: String] = [:]
-    for repo in repos.values.sorted() + sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
+    for repo in watchedRepos.sorted() + sessions.flatMap({ $0.prs.filter(\.isOpen).map(\.repo) }) {
         if byKey[repo.lowercased()] == nil { byKey[repo.lowercased()] = repo }
     }
     return Set(byKey.values)
 }
 
-/// The heading a repo's PRs go under: its app, else its name.
+/// The heading a repo's PRs go under: the repo's name.
 func repoLabel(_ repo: String) -> String {
-    repos.first { $0.value.lowercased() == repo.lowercased() }?.key
-        ?? String(repo.split(separator: "/").last ?? Substring(repo))
+    String(repo.split(separator: "/").last ?? Substring(repo))
 }
 
-/// Splits one section's sessions by app, keeping their order inside each app.
+/// Splits one section's sessions by project, in name order, keeping their
+/// order inside each project.
 func byApp(_ list: [Session]) -> [(app: String, sessions: [Session])] {
-    let apps = appOrder + Set(list.map(\.project)).subtracting(appOrder).sorted()
+    let apps = Set(list.map(\.project)).sorted()
     return apps.compactMap { app in
         let sessions = list.filter { $0.project == app }
         return sessions.isEmpty ? nil : (app, sessions)
@@ -1285,7 +1261,7 @@ struct ContentView: View {
             let rank: (OpenPR) -> Int = { failing.contains($0) ? 0 : conflicts.contains($0) ? 1 : ready.contains($0) ? 2 : 3 }
             let prs = queue.shown.sorted { rank($0) != rank($1) ? rank($0) < rank($1) : $0.number > $1.number }
             let labels = Set(prs.map { repoLabel($0.repo) })
-            let apps = (appOrder + labels.subtracting(appOrder).sorted()).compactMap { app -> (app: String, prs: [OpenPR])? in
+            let apps = labels.sorted().compactMap { app -> (app: String, prs: [OpenPR])? in
                 let list = prs.filter { repoLabel($0.repo) == app }
                 return list.isEmpty ? nil : (app, list)
             }

@@ -1,6 +1,6 @@
 # blackroija
 
-A small floating Mac window that lists your open Claude Code sessions (the Code tab of the Claude desktop app), with the Hypefury repos first. It shows which sessions are working, which need you, and which are stuck, plus your open PRs. Work in one session at a time and jump to the next one from here.
+A small floating Mac window that lists your open Claude Code sessions (the Code tab of the Claude desktop app). It shows which sessions are working, which need you, and which are stuck, plus your open PRs. Work in one session at a time and jump to the next one from here.
 
 It only reads files on your Mac and GitHub. It never sends anything to a session or changes a PR.
 
@@ -10,7 +10,7 @@ The screenshots here use made-up sessions and PRs.
 
 ## What you see
 
-Sessions are sorted into sections, and grouped by app (Web app, Mobile, Website) inside each section:
+Sessions are sorted into sections, and grouped by repo (named after its folder) inside each section:
 
 - **Stuck** (orange): the session stopped mid-turn (for example after a connection error), or it's idle while one of its PRs has failing checks or conflicts. A short line says which.
 - **Needs you**: the session is idle and waiting on you. A red dot means it's blocked until you answer: a question card, a plan to approve, an "Allow / Deny" prompt, or something the session marked as blocking. These come first, oldest first. A session that says it's done stays here until you archive it.
@@ -27,9 +27,9 @@ On the left, three stuck sessions come first, each with the reason. On the right
 
 Each row shows the title, how long it's been idle and all its open PRs. A PR marked "(failing)" has failing checks, and one marked "(conflicts)" has merge conflicts. Click a row to open the session, or click a PR number to open it on GitHub. Hover over a row to see what the session is asking for.
 
-At the bottom, **PRs** lists your own open PRs, plus teammates' PRs that an open session works on, grouped by app. Each one shows a colored dot (red for failing checks, orange for conflicts, green for passing, gray for a draft, a stacked PR or pending checks), its number and its title. Click "PRs" to fold the list.
+At the bottom, **PRs** lists your own open PRs, plus teammates' PRs that an open session works on, grouped by repo. Each one shows a colored dot (red for failing checks, orange for conflicts, green for passing, gray for a draft, a stacked PR or pending checks), its number and its title. Click "PRs" to fold the list.
 
-<img src="docs/prs.png" alt="The PR list, grouped by app, with a colored dot and a note for each PR" width="486">
+<img src="docs/prs.png" alt="The PR list, grouped by repo, with a colored dot and a note for each PR" width="486">
 
 **Control-Option-N**, from any app, opens the next session that needs you: stuck sessions first, then blocked ones, then the rest. Press it again to move on. The last session it opened is shaded in the window.
 
@@ -67,19 +67,11 @@ After changing the code, rebuild and restart it:
 cd ~/workspace/blackroija && ./build.sh && pkill -x blackroija; sleep 1; open "blackroija.app"
 ```
 
-## Setup for your own folders
+## Which sessions and PRs it shows
 
-The window shows sessions from every folder. Sessions in these repos are grouped under their app's name, first; the rest are grouped under their repo's folder name. It finds the repo by its git folder, so worktrees count too. Edit `projects` at the top of `blackroija.swift` if your clones live elsewhere:
+The window shows sessions from every folder, grouped by the folder name of their repo, in name order. It finds the repo by its git folder, so worktrees count too.
 
-```swift
-let projects: [String: String] = [
-    "\(home)/workspace/hypefury-v2/.git": "Web app",
-    "\(home)/workspace/hypefury-website/.git": "Website",
-    "\(home)/workspace/hypefury-v2-mobile/.git": "Mobile",
-]
-```
-
-`repos` maps each label to its GitHub repo, for the PR list. The PR list also covers any other repo a session has an open PR on. Your GitHub login decides which PRs are "yours".
+The PR list covers every repo a session has an open PR on, plus the repos listed in `watchedRepos` in `blackroija.swift`, whose open PRs are shown even when no session works on them. Your GitHub login decides which PRs are "yours".
 
 ## Checking it from the terminal
 

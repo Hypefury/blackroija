@@ -1,6 +1,6 @@
 # Agent instructions
 
-A floating macOS window, written in Swift, that lists the Hypefury repos' Claude Code sessions and what they need. The README explains what it shows. All the code is in `blackroija.swift`, and there's no Xcode project.
+A floating macOS window, written in Swift, that lists your Claude Code sessions and what they need. The README explains what it shows. All the code is in `blackroija.swift`, and there's no Xcode project.
 
 ## Build, check, restart
 
