@@ -293,7 +293,15 @@ enum Grader {
             "-p", "--model", "haiku",
             "--no-session-persistence", "--strict-mcp-config",
             "--setting-sources", "", "--tools", "", "--disable-slash-commands",
+            // Claude Code's own instructions are ~7,000 tokens a call and play
+            // no part in sorting a message.
+            "--system-prompt", "You sort messages an AI coding agent left for the person it works for.",
         ]
+        // Without those instructions Haiku thinks at length (up to ~7,000
+        // tokens); a short think keeps the answers right at a fifth of the cost.
+        var env = ProcessInfo.processInfo.environment
+        env["MAX_THINKING_TOKENS"] = "1024"
+        process.environment = env
         process.currentDirectoryURL = URL(fileURLWithPath: NSTemporaryDirectory())
         let input = Pipe(), output = Pipe(), errors = Pipe()
         process.standardInput = input
