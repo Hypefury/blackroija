@@ -1217,12 +1217,13 @@ struct Row: View {
     }
 }
 
-/// The PRs a session's row names: all its open ones; with none open, one PR
-/// and its state: the latest one the session opened itself, else the first.
+/// The PRs a session's row names: all its open ones; with none open, every
+/// PR the session opened itself and its state, else the first one.
 func prsToShow(_ prs: [SessionPR]) -> [SessionPR] {
     let open = prs.filter(\.isOpen)
     if !open.isEmpty { return open }
-    return Array((prs.last(where: \.own) ?? prs.first).map { [$0] } ?? [])
+    let own = prs.filter(\.own)
+    return own.isEmpty ? Array(prs.prefix(1)) : own
 }
 
 /// The repos to list PRs for: every repo a fresh session has an open PR on.

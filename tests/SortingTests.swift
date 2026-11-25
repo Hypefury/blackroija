@@ -363,6 +363,8 @@ enum SortingTests {
         let rows: [(name: String, prs: [SessionPR], expected: [Int])] = [
             ("With no PR open, the row names the PR the session opened, not an older closed one it built on",
              [closedBase, ownMerged], [202]),
+            ("With no PR open, the row names every PR the session opened",
+             [ownMerged, closedBase, SessionPR(number: 205, repo: repo, state: "CLOSED", own: true)], [202, 205]),
             ("With no PR open and none the session opened, the row names the first one",
              [closedBase, SessionPR(number: 204, repo: repo, state: "MERGED")], [201]),
             ("An open PR hides the closed and merged ones",
