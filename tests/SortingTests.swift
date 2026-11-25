@@ -355,7 +355,29 @@ enum SortingTests {
                 print("FAIL  \(c.name): shows under \(got), should be \(c.expected)")
             }
         }
-        print("\(cases.count - failed) of \(cases.count) passed")
+        // A row's PR: the session's task was the second PR, stacked on an
+        // older one that got closed.
+        let closedBase = SessionPR(number: 201, repo: repo, state: "CLOSED")
+        let ownMerged = SessionPR(number: 202, repo: repo, state: "MERGED", own: true)
+        let ownOpen = SessionPR(number: 203, repo: repo, state: "OPEN", own: true)
+        let rows: [(name: String, prs: [SessionPR], expected: [Int])] = [
+            ("With no PR open, the row names the PR the session opened, not an older closed one it built on",
+             [closedBase, ownMerged], [202]),
+            ("With no PR open and none the session opened, the row names the first one",
+             [closedBase, SessionPR(number: 204, repo: repo, state: "MERGED")], [201]),
+            ("An open PR hides the closed and merged ones",
+             [closedBase, ownMerged, ownOpen], [203]),
+        ]
+        for row in rows {
+            let got = prsToShow(row.prs).map(\.number)
+            if got == row.expected {
+                print("ok    \(row.name)")
+            } else {
+                failed += 1
+                print("FAIL  \(row.name): names \(got), should be \(row.expected)")
+            }
+        }
+        print("\(cases.count + rows.count - failed) of \(cases.count + rows.count) passed")
         try? FileManager.default.removeItem(atPath: scratch)
         exit(failed == 0 ? 0 : 1)
     }

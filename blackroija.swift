@@ -135,6 +135,8 @@ struct SessionPR: Hashable {
     let number: Int
     let repo: String  // "Owner/name"
     let state: String // OPEN, MERGED, CLOSED
+    // The session opened it itself, rather than only working on it.
+    var own = false
 
     var isOpen: Bool { state.uppercased() == "OPEN" }
     var url: URL? { URL(string: "https://github.com/\(repo)/pull/\(number)") }
@@ -193,7 +195,7 @@ enum AppStatus {
 
 private struct SessionFile: Decodable {
     struct Anchor: Decodable { let commonDir: String? }
-    struct PR: Decodable { let prNumber: Int?; let state: String?; let repo: String? }
+    struct PR: Decodable { let prNumber: Int?; let state: String?; let repo: String?; let own: Bool? }
     let sessionId: String
     let cliSessionId: String?
     let title: String?
@@ -736,7 +738,7 @@ final class Store: ObservableObject {
         let (activity, grade, appStatus, question) = (state.activity, state.grade, state.appStatus, state.question)
         let prs: [SessionPR] = (file.prs ?? []).compactMap { pr in
             guard let number = pr.prNumber, let repo = pr.repo else { return nil }
-            return SessionPR(number: number, repo: repo, state: pr.state ?? "OPEN")
+            return SessionPR(number: number, repo: repo, state: pr.state ?? "OPEN", own: pr.own ?? false)
         }
         return Session(
             id: file.sessionId,
@@ -1199,11 +1201,7 @@ struct Row: View {
         .onTapGesture { openSession(session.id) }
     }
 
-    // All its open PRs; with none open, the first one and its state.
-    private var openPRs: [SessionPR] { session.prs.filter(\.isOpen) }
-    private var shownPRs: [SessionPR] {
-        openPRs.isEmpty ? Array(session.prs.prefix(1)) : openPRs
-    }
+    private var shownPRs: [SessionPR] { prsToShow(session.prs) }
 
     private var dotColor: Color {
         if stuck != nil { return .orange }
@@ -1217,6 +1215,14 @@ struct Row: View {
         parts.append(session.activity == .working ? "working" : "idle \(age(session.lastActivity, now: now))")
         return parts.joined(separator: " · ")
     }
+}
+
+/// The PRs a session's row names: all its open ones; with none open, one PR
+/// and its state: the latest one the session opened itself, else the first.
+func prsToShow(_ prs: [SessionPR]) -> [SessionPR] {
+    let open = prs.filter(\.isOpen)
+    if !open.isEmpty { return open }
+    return Array((prs.last(where: \.own) ?? prs.first).map { [$0] } ?? [])
 }
 
 /// The repos to list PRs for: every repo a fresh session has an open PR on.
